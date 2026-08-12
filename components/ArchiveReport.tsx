@@ -1,21 +1,6 @@
 import type { ConvertSuccess } from "@/app/api/convert/route";
 import { formatBytes } from "@/lib/docx/upload";
-
-/**
- * Parts the extraction pipeline will read in later phases. Surfacing which of
- * them a document actually carries turns the phase-0 echo into a useful signal
- * about what that document will exercise.
- */
-const TRACKED_PARTS: ReadonlyArray<{ label: string; test: RegExp }> = [
-  { label: "document", test: /^word\/document\.xml$/ },
-  { label: "styles", test: /^word\/styles\.xml$/ },
-  { label: "theme", test: /^word\/theme\/theme\d*\.xml$/ },
-  { label: "settings", test: /^word\/settings\.xml$/ },
-  { label: "numbering", test: /^word\/numbering\.xml$/ },
-  { label: "headers", test: /^word\/header\d*\.xml$/ },
-  { label: "footers", test: /^word\/footer\d*\.xml$/ },
-  { label: "media", test: /^word\/media\// },
-];
+import { StyleProfileReport } from "./StyleProfileReport";
 
 interface ArchiveReportProps {
   readonly result: ConvertSuccess;
@@ -23,12 +8,8 @@ interface ArchiveReportProps {
 }
 
 export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
-  const found = TRACKED_PARTS.filter(({ test }) =>
-    result.entries.some((entry) => test.test(entry)),
-  );
-
   return (
-    <section className="space-y-6">
+    <section className="space-y-8">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-medium text-zinc-900 dark:text-zinc-100">
@@ -48,29 +29,23 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
         </button>
       </header>
 
-      <ul className="flex flex-wrap gap-2">
-        {found.map(({ label }) => (
-          <li
-            key={label}
-            className="rounded-full bg-violet-100 px-3 py-1 text-xs font-medium text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
-          >
-            {label}
-          </li>
-        ))}
-      </ul>
+      <StyleProfileReport profile={result.profile} />
 
-      <div className="max-h-80 overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
+      <details className="group rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <summary className="cursor-pointer px-4 py-3 text-xs font-medium tracking-wide text-zinc-500 uppercase transition-colors duration-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
+          Package parts
+        </summary>
+        <ul className="max-h-72 overflow-y-auto border-t border-zinc-200 dark:border-zinc-800">
           {result.entries.map((entry) => (
             <li
               key={entry}
-              className="px-4 py-2 font-mono text-xs text-zinc-700 dark:text-zinc-300"
+              className="px-4 py-1.5 font-mono text-xs text-zinc-700 dark:text-zinc-300"
             >
               {entry}
             </li>
           ))}
         </ul>
-      </div>
+      </details>
     </section>
   );
 }

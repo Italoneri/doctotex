@@ -11,10 +11,13 @@ A French-locale Word document, A4 portrait, 24 parts.
 | Aspect | Value |
 | --- | --- |
 | Page | 11906 x 16838 twips (210 x 297 mm) |
-| Margins | top 1701, right/bottom/left 1418, header 567, footer 709 twips |
+| Sections | 2 — see below |
+| Margins | body-level section: 1418 twips all round, header/footer 720 |
 | Styles | 22, of which 3 are headings |
 | Content | 50 paragraphs, 1 table, 1 drawing |
 | Parts | styles, theme, settings, numbering, header1, footer1, 3 media files |
+| Theme | major Cambria, minor Calibri |
+| Body font | Times New Roman from `docDefaults`; no size declared anywhere |
 
 ### What it taught us
 
@@ -29,6 +32,16 @@ from 1.
 
 **`Titre` ("Title") is not a heading level.** It is Word's document-title style
 and needs its own mapping, separate from `heading N`.
+
+**A document can carry more than one `sectPr`, and only one of them is the
+document's.** This file has two: an opening section with a 30mm top margin,
+declared inside the paragraph that ends it and covering 15 paragraphs, and the
+body-level one with 25mm margins covering the other 35. Only the body-level
+`sectPr` is a direct child of `w:body`; the earlier ones nest inside
+`w:p/w:pPr`. Reading the first match in the file gets the wrong geometry.
+
+**Heading sizes are not monotonic.** `heading 4` is 14pt while `heading 3` is
+13pt. The extractor reports what the document says rather than tidying it.
 
 **Equations here are legacy OLE, not OMML.** There are zero `<m:oMath>`
 elements; instead one `<w:object>` wrapping an `<o:OLEObject>` — a Microsoft

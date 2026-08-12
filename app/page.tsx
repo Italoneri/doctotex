@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArchiveReport } from "@/components/ArchiveReport";
@@ -64,10 +64,10 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-16 dark:bg-zinc-950 sm:py-24">
-      <main className="w-full max-w-2xl space-y-10">
+      <main className="w-full max-w-3xl space-y-10">
         <header className="space-y-3 text-center">
           <span className="inline-block rounded-full bg-violet-100 px-3 py-1 text-xs font-medium tracking-wide text-violet-800 uppercase dark:bg-violet-500/15 dark:text-violet-200">
-            Phase 0
+            Phase 1
           </span>
           <h1 className="font-serif text-5xl tracking-tight text-zinc-900 dark:text-zinc-50">
             DocToTex

@@ -1,16 +1,19 @@
 import { DocxFormatError, openDocx } from "@/lib/docx/archive";
 import { describeRejection, rejectUpload } from "@/lib/docx/upload";
+import { extractStyleProfile } from "@/lib/extract/profile";
+import type { StyleProfile } from "@/lib/extract/types";
 
-// jszip and the phase-1 XML parsers are Node-only; pin the runtime so a future
-// edge default never silently breaks the parsing pipeline.
+// jszip and the XML parsers are Node-only; pin the runtime so a future edge
+// default never silently breaks the parsing pipeline.
 export const runtime = "nodejs";
 
-/** Phase 0 response: proves the archive opened, nothing is converted yet. */
+/** Phase 1 response: the document is read and described, not yet converted. */
 export interface ConvertSuccess {
   readonly ok: true;
   readonly filename: string;
   readonly sizeBytes: number;
   readonly entries: readonly string[];
+  readonly profile: StyleProfile;
 }
 
 export interface ConvertFailure {
@@ -38,6 +41,7 @@ export async function POST(request: Request): Promise<Response> {
       filename: file.name,
       sizeBytes: file.size,
       entries: archive.entries,
+      profile: await extractStyleProfile(archive),
     } satisfies ConvertSuccess);
   } catch (error) {
     if (error instanceof DocxFormatError) {
