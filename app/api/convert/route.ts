@@ -1,6 +1,6 @@
 import { DocxFormatError, openDocx, readTextPart } from "@/lib/docx/archive";
 import { describeRejection, rejectUpload } from "@/lib/docx/upload";
-import { extractParagraphs } from "@/lib/extract/body";
+import { countStyleUsage, extractParagraphs } from "@/lib/extract/body";
 import { extractStyleProfile } from "@/lib/extract/profile";
 import type { StyleProfile } from "@/lib/extract/types";
 import { generateSources } from "@/lib/latex/bundle";
@@ -20,6 +20,12 @@ export interface ConvertSuccess {
    * editor can show it and the reader can change it before it is packaged.
    */
   readonly sources: Readonly<Record<string, string>>;
+  /**
+   * Paragraph count per style id. A style declared in styles.xml is not
+   * necessarily applied to anything, and reporting the declaration alone would
+   * claim a structure the document does not have.
+   */
+  readonly styleUsage: Readonly<Record<string, number>>;
 }
 
 export interface ConvertFailure {
@@ -45,6 +51,7 @@ export async function POST(request: Request): Promise<Response> {
     const profile = await extractStyleProfile(archive);
     const documentXml =
       (await readTextPart(archive, "word/document.xml")) ?? "";
+    const paragraphs = extractParagraphs(documentXml);
 
     return Response.json({
       ok: true,
@@ -52,9 +59,8 @@ export async function POST(request: Request): Promise<Response> {
       sizeBytes: file.size,
       entries: archive.entries,
       profile,
-      sources: Object.fromEntries(
-        generateSources(profile, extractParagraphs(documentXml)),
-      ),
+      sources: Object.fromEntries(generateSources(profile, paragraphs)),
+      styleUsage: Object.fromEntries(countStyleUsage(paragraphs)),
     } satisfies ConvertSuccess);
   } catch (error) {
     if (error instanceof DocxFormatError) {

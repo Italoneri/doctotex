@@ -38,6 +38,28 @@ export function extractParagraphs(documentXml: string): readonly Paragraph[] {
   return body.children.filter((node) => node.name === "w:p").map(readParagraph);
 }
 
+/**
+ * How many paragraphs point at each style.
+ *
+ * A style declared in styles.xml is not necessarily used: documents routinely
+ * carry Word's built-in heading styles while every visible heading is a normal
+ * paragraph someone bolded by hand. Reporting the declaration alone would claim
+ * a structure the document does not have.
+ */
+export function countStyleUsage(
+  paragraphs: readonly Paragraph[],
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+
+  for (const { styleId } of paragraphs) {
+    if (styleId) {
+      counts.set(styleId, (counts.get(styleId) ?? 0) + 1);
+    }
+  }
+
+  return counts;
+}
+
 function readParagraph(node: SequenceNode): Paragraph {
   const style = descendSequence(node, "w:pPr", "w:pStyle");
 

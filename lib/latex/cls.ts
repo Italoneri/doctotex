@@ -35,9 +35,13 @@ export interface HeaderFooterText {
   readonly footer?: string;
 }
 
+/** How many paragraphs use each style, so unused ones can be labelled. */
+export type StyleUsage = ReadonlyMap<string, number>;
+
 export function generateClass(
   profile: StyleProfile,
   headerFooter: HeaderFooterText = {},
+  usage: StyleUsage = new Map(),
 ): string {
   const bodySizePt = profile.defaults.text.fontSizePt ?? DEFAULT_BODY_SIZE_PT;
   const bodyFamily = mapFont(profile.defaults.text.fontFamily).family;
@@ -51,7 +55,7 @@ export function generateClass(
     "",
     ...spacing(profile),
     "",
-    ...headings(profile, bodySizePt, bodyFamily),
+    ...headings(profile, bodySizePt, bodyFamily, usage),
     "",
     ...titleCommand(profile.title, bodySizePt, bodyFamily),
     "",
@@ -221,6 +225,7 @@ function headings(
   profile: StyleProfile,
   bodySizePt: number,
   bodyFamily: LatexFamily,
+  usage: StyleUsage,
 ): readonly string[] {
   const lines = [
     "%% Heading styles, one per outline level the document declares.",
@@ -232,6 +237,15 @@ function headings(
     return lines;
   }
 
+  const used = profile.headings.filter((h) => (usage.get(h.styleId) ?? 0) > 0);
+  if (used.length === 0) {
+    lines.push(
+      "%% None of these styles is applied to any paragraph in the document:",
+      "%% every heading in it is a normal paragraph formatted by hand. The",
+      "%% definitions are kept so the structure can be applied by hand here.",
+    );
+  }
+
   for (const heading of profile.headings) {
     const command = SECTIONING[heading.level - 1];
     if (!command) {
@@ -241,7 +255,16 @@ function headings(
       );
       continue;
     }
-    lines.push("", ...formatHeading(command, heading, bodySizePt, bodyFamily));
+    lines.push(
+      "",
+      ...formatHeading(
+        command,
+        heading,
+        bodySizePt,
+        bodyFamily,
+        usage.get(heading.styleId) ?? 0,
+      ),
+    );
   }
 
   return lines;
@@ -252,11 +275,16 @@ function formatHeading(
   heading: HeadingStyle,
   bodySizePt: number,
   bodyFamily: LatexFamily,
+  uses: number,
 ): readonly string[] {
   const before = heading.text.allCaps ? "\\MakeUppercase" : "";
+  const applied =
+    uses === 0
+      ? "declared but applied to no paragraph"
+      : `applied to ${uses} paragraph${uses === 1 ? "" : "s"}`;
 
   return [
-    `%% ${heading.styleId} (heading ${heading.level})`,
+    `%% ${heading.styleId} (heading ${heading.level}) — ${applied}`,
     `\\titleformat{\\${command}}`,
     `  {${appearance(heading, bodySizePt, bodyFamily)}}`,
     "  {}{0pt}",

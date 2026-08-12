@@ -30,7 +30,10 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
         </button>
       </header>
 
-      <StyleProfileReport profile={result.profile} />
+      <StyleProfileReport
+        profile={result.profile}
+        styleUsage={result.styleUsage}
+      />
 
       <SourcesPanel filename={result.filename} sources={result.sources} />
 

@@ -8,9 +8,17 @@ import { PageDiagram } from "./PageDiagram";
 
 interface StyleProfileReportProps {
   readonly profile: StyleProfile;
+  /** Paragraph count per style id, to tell declared apart from applied. */
+  readonly styleUsage: Readonly<Record<string, number>>;
 }
 
-export function StyleProfileReport({ profile }: StyleProfileReportProps) {
+export function StyleProfileReport({
+  profile,
+  styleUsage,
+}: StyleProfileReportProps) {
+  const appliedHeadings = profile.headings.filter(
+    (heading) => (styleUsage[heading.styleId] ?? 0) > 0,
+  );
   return (
     <div className="space-y-8">
       <Section title="Page">
@@ -56,19 +64,31 @@ export function StyleProfileReport({ profile }: StyleProfileReportProps) {
         </dl>
       </Section>
 
-      <Section title={`Headings (${profile.headings.length})`}>
+      <Section title={headingsTitle(profile, appliedHeadings.length)}>
         {profile.headings.length === 0 ? (
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
             This document defines no heading styles.
           </p>
         ) : (
-          <ul className="space-y-2">
-            {profile.headings.map((heading) => (
-              <HeadingRow key={heading.styleId} heading={heading} />
-            ))}
-          </ul>
+          <>
+            {appliedHeadings.length === 0 && <UnusedHeadingsNotice />}
+            <ul className="space-y-2">
+              {profile.headings.map((heading) => (
+                <HeadingRow
+                  key={heading.styleId}
+                  heading={heading}
+                  uses={styleUsage[heading.styleId] ?? 0}
+                />
+              ))}
+            </ul>
+          </>
         )}
-        {profile.title && <TitleRow title={profile.title} />}
+        {profile.title && (
+          <TitleRow
+            title={profile.title}
+            uses={styleUsage[profile.title.styleId] ?? 0}
+          />
+        )}
       </Section>
 
       <Section title="Contains">
@@ -87,7 +107,35 @@ export function StyleProfileReport({ profile }: StyleProfileReportProps) {
   );
 }
 
-function HeadingRow({ heading }: { readonly heading: HeadingStyle }) {
+function headingsTitle(profile: StyleProfile, applied: number): string {
+  if (profile.headings.length === 0) {
+    return "Headings";
+  }
+  return `Headings — ${profile.headings.length} declared, ${applied} in use`;
+}
+
+/**
+ * The distinction matters more than it looks: a document can carry Word's whole
+ * heading hierarchy and still have every visible heading typed as a bolded
+ * normal paragraph, in which case the template genuinely has no sections.
+ */
+function UnusedHeadingsNotice() {
+  return (
+    <p className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100">
+      None of these styles is applied to any paragraph. Every heading in this
+      document was formatted by hand, so the generated template has no sections
+      — the class still defines them, ready to be applied.
+    </p>
+  );
+}
+
+function HeadingRow({
+  heading,
+  uses,
+}: {
+  readonly heading: HeadingStyle;
+  readonly uses: number;
+}) {
   return (
     <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-800">
       <span className="rounded bg-zinc-900 px-2 py-0.5 font-mono text-xs text-white dark:bg-zinc-100 dark:text-zinc-900">
@@ -99,18 +147,41 @@ function HeadingRow({ heading }: { readonly heading: HeadingStyle }) {
       <span className="text-sm text-zinc-800 dark:text-zinc-200">
         {describeStyle(heading)}
       </span>
+      <UsageBadge uses={uses} />
     </li>
   );
 }
 
-function TitleRow({ title }: { readonly title: EffectiveStyle }) {
+function TitleRow({
+  title,
+  uses,
+}: {
+  readonly title: EffectiveStyle;
+  readonly uses: number;
+}) {
   return (
     <p className="mt-2 flex flex-wrap items-baseline gap-x-3 rounded-lg border border-dashed border-zinc-200 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
       <span className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
         Title
       </span>
       {describeStyle(title)}
+      <UsageBadge uses={uses} />
     </p>
+  );
+}
+
+function UsageBadge({ uses }: { readonly uses: number }) {
+  if (uses === 0) {
+    return (
+      <span className="ml-auto rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+        unused
+      </span>
+    );
+  }
+  return (
+    <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200">
+      {uses}&times;
+    </span>
   );
 }
 

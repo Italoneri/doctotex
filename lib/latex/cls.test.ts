@@ -171,6 +171,32 @@ describe("headings", () => {
     expect(generateClass(profile())).toContain("declares no heading styles");
   });
 
+  // Claiming a structure the document does not have would be worse than
+  // having none, so the class says which styles nothing uses.
+  it("marks a heading style no paragraph applies", () => {
+    const cls = generateClass(
+      profile({
+        headings: [{ level: 1, styleId: "Titre1", text: {}, paragraph: {} }],
+      }),
+    );
+
+    expect(cls).toContain("declared but applied to no paragraph");
+    expect(cls).toContain("None of these styles is applied");
+  });
+
+  it("reports how many paragraphs use a style that is applied", () => {
+    const cls = generateClass(
+      profile({
+        headings: [{ level: 1, styleId: "Titre1", text: {}, paragraph: {} }],
+      }),
+      {},
+      new Map([["Titre1", 4]]),
+    );
+
+    expect(cls).toContain("applied to 4 paragraphs");
+    expect(cls).not.toContain("None of these styles is applied");
+  });
+
   it("reports a level deeper than LaTeX can express", () => {
     const cls = generateClass(
       profile({

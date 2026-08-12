@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import type { Paragraph } from "@/lib/extract/body";
+import { countStyleUsage, type Paragraph } from "@/lib/extract/body";
 import type { StyleProfile } from "@/lib/extract/types";
 import { CLASS_NAME, generateClass, type HeaderFooterText } from "./cls";
 import { generateDocument, MAIN_FILE } from "./tex";
@@ -19,7 +19,10 @@ export function generateSources(
   headerFooter: HeaderFooterText = {},
 ): SourceFiles {
   return new Map([
-    [CLASS_FILE, generateClass(profile, headerFooter)],
+    [
+      CLASS_FILE,
+      generateClass(profile, headerFooter, countStyleUsage(paragraphs)),
+    ],
     [MAIN_FILE, generateDocument(profile, paragraphs)],
   ]);
 }

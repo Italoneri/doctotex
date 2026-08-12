@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractParagraphs } from "./body";
+import { countStyleUsage, extractParagraphs } from "./body";
 
 function documentXml(body: string): string {
   return `<?xml version="1.0"?>
@@ -51,6 +51,28 @@ describe("extractParagraphs", () => {
 
   it("returns nothing when there is no body", () => {
     expect(extractParagraphs("<nonsense/>")).toEqual([]);
+  });
+});
+
+describe("countStyleUsage", () => {
+  it("counts the paragraphs that point at each style", () => {
+    const usage = countStyleUsage([
+      { styleId: "Titre1", runs: [] },
+      { styleId: "Titre1", runs: [] },
+      { styleId: "Titre3", runs: [] },
+    ]);
+
+    expect(usage.get("Titre1")).toBe(2);
+    expect(usage.get("Titre3")).toBe(1);
+  });
+
+  // A style declared in styles.xml but applied to nothing is the normal case
+  // in documents whose headings were formatted by hand.
+  it("reports nothing for a style no paragraph uses", () => {
+    const usage = countStyleUsage([{ runs: [] }, { runs: [] }]);
+
+    expect(usage.get("Titre1")).toBeUndefined();
+    expect(usage.size).toBe(0);
   });
 });
 
