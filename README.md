@@ -14,8 +14,20 @@ browser before download.
 
 ## Status
 
-**Phase 0 — setup.** Upload works and the archive is opened and inspected;
-nothing is converted yet. See the roadmap below.
+**Phase 2.** Upload a `.docx` and it comes back as a `doctotex.cls` and a
+`main.tex` that compile under pdfLaTeX, downloadable as a zip. Tables, images
+and equations are not carried across yet.
+
+Compilation is verified by the test suite against the real engine, not
+asserted about: `lib/latex/compile.test.ts` runs pdfLaTeX in the texlive
+container and fails on a non-zero exit. It skips where no Docker daemon is
+reachable.
+
+To read the generated output rather than assert about it:
+
+```bash
+DOCTOTEX_INSPECT=1 npm run test   # writes sources, PDF and log to out/
+```
 
 ## Getting started
 
@@ -54,15 +66,15 @@ Tests sit next to the code they cover (`upload.test.ts` beside `upload.ts`).
 
 ## Roadmap
 
-| Phase | Scope                                                                     | State         |
-| ----- | ------------------------------------------------------------------------- | ------------- |
-| 0     | Setup, upload, archive inspection                                         | done          |
-| 1     | Parse margins, typography, colours, heading hierarchy into `StyleProfile` | next          |
-| 2     | Generate `doctotex.cls` + `main.tex`, assemble the ZIP                    |               |
-| 3     | Monaco code preview + server-side PDF rendering                           | MVP ends here |
-| 4     | Config panel: compiler, bibliography, output shape                        |               |
-| 5     | Tables, images, equations (OMML)                                          |               |
-| 6     | Visual polish                                                             |               |
+| Phase | Scope                                                                     | State               |
+| ----- | ------------------------------------------------------------------------- | ------------------- |
+| 0     | Setup, upload, archive inspection                                         | done                |
+| 1     | Parse margins, typography, colours, heading hierarchy into `StyleProfile` | done                |
+| 2     | Generate `doctotex.cls` + `main.tex`, assemble the ZIP                    | done                |
+| 3     | Monaco code preview + server-side PDF rendering                           | next, MVP ends here |
+| 4     | Config panel: compiler, bibliography, output shape                        |                     |
+| 5     | Tables, images, equations (OMML)                                          |                     |
+| 6     | Visual polish                                                             |                     |
 
 ## Toolchain decisions
 

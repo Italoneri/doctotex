@@ -61,6 +61,13 @@ body-level one with 25mm margins covering the other 35. Only the body-level
 `sectPr` is a direct child of `w:body`; the earlier ones nest inside
 `w:p/w:pPr`. Reading the first match in the file gets the wrong geometry.
 
+**None of its 50 paragraphs reference a style.** `Titre1`, `Titre3` and `Titre4`
+are declared in `styles.xml` and then never applied: every heading in the body
+is a normal paragraph that was manually bolded and capitalised. The generated
+template therefore has no sections, which is faithful but structureless. Real
+documents do this constantly, and it is the reason a converter cannot rely on
+`w:pStyle` alone to recover structure.
+
 **Heading sizes are not monotonic.** `heading 4` is 14pt while `heading 3` is
 13pt. The extractor reports what the document says rather than tidying it.
 
