@@ -57,11 +57,14 @@ export interface EffectiveStyle {
   readonly paragraph: ParagraphStyle;
 }
 
-export interface HeadingStyle extends EffectiveStyle {
-  /** 1-based Word outline level. Documents may skip levels entirely. */
-  readonly level: number;
+export interface NamedStyle extends EffectiveStyle {
   /** Localised in non-English documents: "Titre1" rather than "Heading1". */
   readonly styleId: string;
+}
+
+export interface HeadingStyle extends NamedStyle {
+  /** 1-based Word outline level. Documents may skip levels entirely. */
+  readonly level: number;
 }
 
 export interface ThemeFonts {
@@ -86,7 +89,7 @@ export interface StyleProfile {
   readonly defaults: EffectiveStyle;
   readonly headings: readonly HeadingStyle[];
   /** Word's "Title" style, which is not part of the heading levels. */
-  readonly title?: EffectiveStyle;
+  readonly title?: NamedStyle;
   readonly theme: ThemeFonts;
   readonly features: DocumentFeatures;
 }

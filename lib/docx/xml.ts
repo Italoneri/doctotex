@@ -11,7 +11,11 @@ const parser = new XMLParser({
   // silently turn "0080" into 80 and "auto" into NaN.
   parseAttributeValue: false,
   parseTagValue: false,
-  trimValues: true,
+  // Trimming would silently eat the significant whitespace that
+  // `<w:t xml:space="preserve">Hello </w:t>` exists to carry, welding the
+  // next run onto it. Whitespace-only text between elements is harmless
+  // because every accessor here reads named children, never `#text`.
+  trimValues: false,
   // Prefixes are part of the name we match on: w:sz and a:sz are unrelated.
   removeNSPrefix: false,
 });

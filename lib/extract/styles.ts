@@ -22,6 +22,7 @@ import type {
   EffectiveStyle,
   HeadingStyle,
   LineSpacing,
+  NamedStyle,
   ParagraphStyle,
   TextStyle,
   ThemeFonts,
@@ -133,10 +134,11 @@ export function findHeadingStyles(sheet: StyleSheet): readonly HeadingStyle[] {
 }
 
 /** Word's "Title" is a document title, not an outline level. */
-export function findTitleStyle(sheet: StyleSheet): EffectiveStyle | undefined {
+export function findTitleStyle(sheet: StyleSheet): NamedStyle | undefined {
   for (const definition of sheet.definitions.values()) {
     if (definition.name === TITLE_NAME) {
-      return resolveStyle(sheet, definition.styleId);
+      const { text, paragraph } = resolveStyle(sheet, definition.styleId);
+      return { styleId: definition.styleId, text, paragraph };
     }
   }
   return undefined;

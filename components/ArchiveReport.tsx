@@ -1,5 +1,6 @@
 import type { ConvertSuccess } from "@/app/api/convert/route";
 import { formatBytes } from "@/lib/docx/upload";
+import { SourcesPanel } from "./SourcesPanel";
 import { StyleProfileReport } from "./StyleProfileReport";
 
 interface ArchiveReportProps {
@@ -30,6 +31,8 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
       </header>
 
       <StyleProfileReport profile={result.profile} />
+
+      <SourcesPanel filename={result.filename} sources={result.sources} />
 
       <details className="group rounded-xl border border-zinc-200 dark:border-zinc-800">
         <summary className="cursor-pointer px-4 py-3 text-xs font-medium tracking-wide text-zinc-500 uppercase transition-colors duration-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
