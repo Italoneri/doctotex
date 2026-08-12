@@ -1,23 +1,44 @@
 # Fixtures
 
-Real `.docx` files the test suite runs against. They are committed on purpose:
-style extraction is only meaningful against documents Word and Google Docs
-actually produce, and synthetic fixtures miss the quirks that break parsers.
+Real `.docx` files the test suite runs against. Style extraction is only
+meaningful against documents Word and Google Docs actually produce; synthetic
+fixtures miss the quirks that break parsers.
+
+**The documents themselves are gitignored** — `*.docx` never enters the repo, so
+source documents stay on the machine that owns them. Only this README and
+`fixture.ts` are tracked.
+
+The consequence is that a fresh checkout has no fixtures. Tests that need one
+gate on `hasFixture` and skip:
+
+```ts
+import { hasFixture, readFixture } from "@/fixtures/fixture";
+
+const FIXTURE = "exemplo.docx";
+const describeFixture = describe.skipIf(!hasFixture(FIXTURE));
+```
+
+Without a fixture the suite reports skips rather than failures, because a
+missing file says nothing about whether the code is correct. It also means green
+does not imply covered — check the skip count.
+
+What follows documents fixtures used during development, so their findings
+survive even when the files do not.
 
 ## `exemplo.docx`
 
 A French-locale Word document, A4 portrait, 24 parts.
 
-| Aspect | Value |
-| --- | --- |
-| Page | 11906 x 16838 twips (210 x 297 mm) |
-| Sections | 2 — see below |
-| Margins | body-level section: 1418 twips all round, header/footer 720 |
-| Styles | 22, of which 3 are headings |
-| Content | 50 paragraphs, 1 table, 1 drawing |
-| Parts | styles, theme, settings, numbering, header1, footer1, 3 media files |
-| Theme | major Cambria, minor Calibri |
-| Body font | Times New Roman from `docDefaults`; no size declared anywhere |
+| Aspect    | Value                                                               |
+| --------- | ------------------------------------------------------------------- |
+| Page      | 11906 x 16838 twips (210 x 297 mm)                                  |
+| Sections  | 2 — see below                                                       |
+| Margins   | body-level section: 1418 twips all round, header/footer 720         |
+| Styles    | 22, of which 3 are headings                                         |
+| Content   | 50 paragraphs, 1 table, 1 drawing                                   |
+| Parts     | styles, theme, settings, numbering, header1, footer1, 3 media files |
+| Theme     | major Cambria, minor Calibri                                        |
+| Body font | Times New Roman from `docDefaults`; no size declared anywhere       |
 
 ### What it taught us
 

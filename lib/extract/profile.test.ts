@@ -1,20 +1,24 @@
-import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
+import { hasFixture, readFixture } from "@/fixtures/fixture";
 import { openDocx } from "@/lib/docx/archive";
 import { extractStyleProfile } from "./profile";
 import type { StyleProfile } from "./types";
 
-const FIXTURE = new URL("../../fixtures/exemplo.docx", import.meta.url);
+const FIXTURE = "exemplo.docx";
 
 /**
  * Every expectation below was read off exemplo.docx's raw XML first, so this
  * suite checks the extractor against the document rather than against itself.
+ * That also means the expectations describe this document specifically and do
+ * not transfer to another fixture.
  */
 async function profile(): Promise<StyleProfile> {
-  return extractStyleProfile(await openDocx(await readFile(FIXTURE)));
+  return extractStyleProfile(await openDocx(await readFixture(FIXTURE)));
 }
 
-describe("page", () => {
+const describeFixture = describe.skipIf(!hasFixture(FIXTURE));
+
+describeFixture("page", () => {
   it("reads the A4 geometry from sectPr", async () => {
     const { page } = await profile();
 
@@ -41,7 +45,7 @@ describe("page", () => {
   });
 });
 
-describe("theme", () => {
+describeFixture("theme", () => {
   it("reads both latin typefaces from theme1.xml", async () => {
     expect((await profile()).theme).toEqual({
       major: "Cambria",
@@ -50,7 +54,7 @@ describe("theme", () => {
   });
 });
 
-describe("defaults", () => {
+describeFixture("defaults", () => {
   it("takes the body font from docDefaults through Normal", async () => {
     expect((await profile()).defaults.text.fontFamily).toBe("Times New Roman");
   });
@@ -62,7 +66,7 @@ describe("defaults", () => {
   });
 });
 
-describe("headings", () => {
+describeFixture("headings", () => {
   it("finds all three despite the localised style ids", async () => {
     const { headings } = await profile();
 
@@ -107,7 +111,7 @@ describe("headings", () => {
   });
 });
 
-describe("title", () => {
+describeFixture("title", () => {
   it("reads Title separately from the heading levels", async () => {
     const { title, headings } = await profile();
 
@@ -118,7 +122,7 @@ describe("title", () => {
   });
 });
 
-describe("features", () => {
+describeFixture("features", () => {
   it("reports what the document actually contains", async () => {
     expect((await profile()).features).toEqual({
       tables: true,

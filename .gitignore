@@ -43,3 +43,6 @@ next-env.d.ts
 # tooling caches
 /.impeccable
 
+# source documents stay local; tests skip when a fixture is absent
+*.docx
+
