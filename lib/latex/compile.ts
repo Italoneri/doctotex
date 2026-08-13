@@ -18,11 +18,25 @@ const WORKDIR = "/work";
 
 export type Engine = "pdflatex" | "xelatex" | "lualatex";
 
-export interface CompileResult {
-  readonly ok: boolean;
-  /** The TeX log, which is where a compilation failure explains itself. */
-  readonly log: string;
-  readonly pdf?: Uint8Array;
+/**
+ * Three outcomes, not two. A document TeX refuses and a daemon that never
+ * answered both used to arrive as `ok: false` with an empty log, which left the
+ * caller telling the reader their LaTeX was broken when Docker was simply not
+ * running.
+ */
+export type CompileResult =
+  | {
+      readonly kind: "compiled";
+      readonly log: string;
+      readonly pdf: Uint8Array;
+    }
+  | { readonly kind: "rejected"; readonly log: string }
+  | { readonly kind: "unavailable"; readonly reason: string };
+
+export interface CompileOptions {
+  readonly engine?: Engine;
+  /** Overridable so a test can point at a command that is certain to be absent. */
+  readonly docker?: string;
 }
 
 /**
@@ -35,7 +49,7 @@ export interface CompileResult {
 export async function compile(
   sources: SourceFiles,
   entry: string,
-  engine: Engine = "pdflatex",
+  options: CompileOptions = {},
 ): Promise<CompileResult> {
   const directory = await mkdtemp(join(tmpdir(), "doctotex-"));
 
@@ -46,7 +60,7 @@ export async function compile(
       ),
     );
 
-    return await runEngine(directory, entry, engine);
+    return await runEngine(directory, entry, options);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -55,7 +69,7 @@ export async function compile(
 async function runEngine(
   directory: string,
   entry: string,
-  engine: Engine,
+  { engine = "pdflatex", docker = "docker" }: CompileOptions,
 ): Promise<CompileResult> {
   const args = [
     "run",
@@ -73,18 +87,55 @@ async function runEngine(
   ];
 
   try {
-    await run("docker", args, { timeout: COMPILE_TIMEOUT_MS });
-  } catch {
+    await run(docker, args, { timeout: COMPILE_TIMEOUT_MS });
+  } catch (error) {
     // A non-zero exit is the normal way TeX reports a bad document, so the log
-    // matters more than the exception.
-    return { ok: false, log: await readLog(directory, entry) };
+    // matters more than the exception. The log is also what tells the two
+    // failures apart: TeX writes one whenever it runs at all, so its absence
+    // means the engine never started.
+    const log = await readLog(directory, entry);
+    if (isTimeout(error)) {
+      return {
+        kind: "unavailable",
+        reason: `The engine did not finish within ${COMPILE_TIMEOUT_MS / 1000}s.`,
+      };
+    }
+    return log
+      ? { kind: "rejected", log }
+      : { kind: "unavailable", reason: describeFailure(error) };
   }
 
-  return {
-    ok: true,
-    log: await readLog(directory, entry),
-    pdf: await readOutput(directory, entry),
-  };
+  const pdf = await readOutput(directory, entry);
+  const log = await readLog(directory, entry);
+
+  // A zero exit with no PDF is not success; nonstopmode can end that way.
+  return pdf ? { kind: "compiled", log, pdf } : { kind: "rejected", log };
+}
+
+interface ProcessFailure {
+  readonly killed?: boolean;
+  readonly code?: string | number;
+  readonly stderr?: string;
+}
+
+function asFailure(error: unknown): ProcessFailure {
+  return typeof error === "object" && error !== null ? error : {};
+}
+
+function isTimeout(error: unknown): boolean {
+  return asFailure(error).killed === true;
+}
+
+function describeFailure(error: unknown): string {
+  const { code, stderr } = asFailure(error);
+
+  if (code === "ENOENT") {
+    return "The docker command was not found on this machine.";
+  }
+  const detail = stderr?.trim();
+  return detail
+    ? `Docker could not run the engine: ${detail.slice(0, 500)}`
+    : "Docker could not run the engine.";
 }
 
 async function readLog(directory: string, entry: string): Promise<string> {

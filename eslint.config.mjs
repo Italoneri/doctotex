@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Monaco's prebuilt bundle, vendored on install and not ours to lint.
+    "public/monaco/**",
   ]),
 ]);
 

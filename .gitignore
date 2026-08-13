@@ -43,6 +43,9 @@ next-env.d.ts
 # tooling caches
 /.impeccable
 
+# vendored by scripts/vendor-monaco.mjs on postinstall
+/public/monaco
+
 # source documents stay local; tests skip when a fixture is absent
 *.docx
 

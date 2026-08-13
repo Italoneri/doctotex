@@ -64,10 +64,16 @@ export default function Home() {
 
   return (
     <div className="flex flex-1 flex-col items-center bg-zinc-50 px-6 py-16 dark:bg-zinc-950 sm:py-24">
-      <main className="w-full max-w-3xl space-y-10">
+      <main
+        className={[
+          "w-full space-y-10 transition-[max-width] duration-300",
+          // The editor and its preview sit side by side, which needs the room.
+          state.status === "read" ? "max-w-7xl" : "max-w-3xl",
+        ].join(" ")}
+      >
         <header className="space-y-3 text-center">
           <span className="inline-block rounded-full bg-violet-100 px-3 py-1 text-xs font-medium tracking-wide text-violet-800 uppercase dark:bg-violet-500/15 dark:text-violet-200">
-            Phase 1
+            Phase 3
           </span>
           <h1 className="font-serif text-5xl tracking-tight text-zinc-900 dark:text-zinc-50">
             DocToTex

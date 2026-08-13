@@ -1,21 +1,7 @@
 import { buildZip } from "@/lib/latex/bundle";
+import { readSources } from "@/lib/latex/payload";
 
 export const runtime = "nodejs";
-
-/** Guards against a request asking for an archive of arbitrary size. */
-const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
-
-/**
- * A path segment must begin with something other than a dot. Allowing a dot
- * first would admit `..`, and an archive entry named `../../etc/passwd` escapes
- * the extraction directory on any tool that follows the path — zip slip.
- */
-const SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
-
-function isSafePath(path: string): boolean {
-  const segments = path.split("/");
-  return segments.length > 0 && segments.every((s) => SEGMENT.test(s));
-}
 
 export interface BundleRequest {
   readonly filename: string;
@@ -47,34 +33,6 @@ export async function POST(request: Request): Promise<Response> {
       "Content-Disposition": `attachment; filename="${downloadName(payload)}"`,
     },
   });
-}
-
-function readSources(
-  payload: unknown,
-): ReadonlyMap<string, string> | undefined {
-  if (typeof payload !== "object" || payload === null) {
-    return undefined;
-  }
-  const raw = (payload as { sources?: unknown }).sources;
-  if (typeof raw !== "object" || raw === null) {
-    return undefined;
-  }
-
-  const sources = new Map<string, string>();
-  let total = 0;
-
-  for (const [path, content] of Object.entries(raw)) {
-    if (typeof content !== "string" || !isSafePath(path)) {
-      return undefined;
-    }
-    total += content.length;
-    if (total > MAX_SOURCE_BYTES) {
-      return undefined;
-    }
-    sources.set(path, content);
-  }
-
-  return sources.size > 0 ? sources : undefined;
 }
 
 function downloadName(payload: unknown): string {

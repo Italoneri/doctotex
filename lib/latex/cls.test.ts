@@ -209,8 +209,14 @@ describe("headings", () => {
 });
 
 describe("page style", () => {
-  it("falls back to a centred page number with no footer text", () => {
-    expect(generateClass(profile())).toContain("\\fancyfoot[C]{\\thepage}");
+  // A Word document with no footer prints no page number, so inventing one
+  // would put a mark on the page that the original never had.
+  it("leaves the footer empty when the document declares none", () => {
+    const cls = generateClass(profile());
+
+    expect(cls).toContain("\\fancyhf{}");
+    expect(cls).not.toContain("\\fancyfoot");
+    expect(cls).not.toContain("\\thepage");
   });
 
   it("uses the document's own header and footer when given", () => {

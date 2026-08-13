@@ -362,14 +362,14 @@ function pageStyle(headerFooter: HeaderFooterText): readonly string[] {
     "\\renewcommand{\\headrulewidth}{0pt}",
   ];
 
+  // Only what the document carries. A Word file with no footer prints no page
+  // number, so supplying \thepage here would add a mark the original never had.
   if (headerFooter.header) {
     lines.push(`\\fancyhead[C]{${headerFooter.header}}`);
   }
-  lines.push(
-    headerFooter.footer
-      ? `\\fancyfoot[C]{${headerFooter.footer}}`
-      : "\\fancyfoot[C]{\\thepage}",
-  );
+  if (headerFooter.footer) {
+    lines.push(`\\fancyfoot[C]{${headerFooter.footer}}`);
+  }
 
   return lines;
 }

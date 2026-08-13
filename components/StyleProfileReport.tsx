@@ -91,19 +91,42 @@ export function StyleProfileReport({
         )}
       </Section>
 
-      <Section title="Contains">
-        <ul className="flex flex-wrap gap-2">
-          {featureLabels(profile).map((label) => (
-            <li
-              key={label}
-              className="rounded-full bg-violet-100 px-3 py-1 text-xs font-medium text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
-            >
-              {label}
-            </li>
-          ))}
-        </ul>
-      </Section>
+      <FeatureSection profile={profile} />
     </div>
+  );
+}
+
+/**
+ * A document of nothing but text has no features to list, and a heading over an
+ * empty row reads as something that failed to load. Saying so plainly is both
+ * shorter and true.
+ */
+function FeatureSection({ profile }: { readonly profile: StyleProfile }) {
+  const labels = featureLabels(profile);
+
+  if (labels.length === 0) {
+    return (
+      <Section title="Contains">
+        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          Text only &mdash; no tables, images, equations or lists.
+        </p>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Contains">
+      <ul className="flex flex-wrap gap-2">
+        {labels.map((label) => (
+          <li
+            key={label}
+            className="rounded-full bg-violet-100 px-3 py-1 text-xs font-medium text-violet-800 dark:bg-violet-500/15 dark:text-violet-200"
+          >
+            {label}
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 

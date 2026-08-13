@@ -4,7 +4,7 @@ import { openDocx, readTextPart } from "@/lib/docx/archive";
 import { extractParagraphs } from "@/lib/extract/body";
 import { extractStyleProfile } from "@/lib/extract/profile";
 import { CLASS_FILE, generateSources, type SourceFiles } from "./bundle";
-import { compile, isDockerAvailable } from "./compile";
+import { compile, type CompileResult, isDockerAvailable } from "./compile";
 import { MAIN_FILE } from "./tex";
 
 const FIXTURE = "exemplo.docx";
@@ -38,11 +38,11 @@ describeCompiling("generated sources", () => {
     const result = await compile(await sourcesFromFixture(), MAIN_FILE);
 
     // The log is the only place TeX explains itself, so a failure carries it
-    // rather than reporting a bare false.
-    if (!result.ok) {
-      throw new Error(`pdflatex failed:\n${result.log.slice(-5000)}`);
+    // rather than reporting a bare kind.
+    if (result.kind !== "compiled") {
+      throw new Error(`pdflatex failed:\n${describe_(result)}`);
     }
-    expect(result.pdf?.length ?? 0).toBeGreaterThan(1000);
+    expect(result.pdf.length).toBeGreaterThan(1000);
   });
 });
 
@@ -57,8 +57,31 @@ describe.skipIf(!dockerUp)("compile", () => {
 
     const result = await compile(broken, MAIN_FILE);
 
-    expect(result.ok).toBe(false);
-    expect(result.log).toContain("Undefined control sequence");
-    expect(result.pdf).toBeUndefined();
+    expect(result.kind).toBe("rejected");
+    expect(result.kind === "rejected" && result.log).toContain(
+      "Undefined control sequence",
+    );
   });
 });
+
+// Needs no daemon, which is the point: it is the case where there isn't one.
+describe("an engine that cannot be reached", () => {
+  it("is reported apart from a rejected document", async () => {
+    const result = await compile(
+      new Map([[MAIN_FILE, "\\documentclass{article}"]]),
+      MAIN_FILE,
+      { docker: "docker-that-does-not-exist" },
+    );
+
+    expect(result.kind).toBe("unavailable");
+    expect(result.kind === "unavailable" && result.reason).toContain(
+      "was not found",
+    );
+  });
+});
+
+function describe_(result: CompileResult): string {
+  return result.kind === "unavailable"
+    ? result.reason
+    : result.log.slice(-5000);
+}

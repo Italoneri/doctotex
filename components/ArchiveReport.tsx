@@ -1,5 +1,9 @@
+"use client";
+
+import { useCallback, useMemo, useState } from "react";
 import type { ConvertSuccess } from "@/app/api/convert/route";
 import { formatBytes } from "@/lib/docx/upload";
+import { PreviewPane } from "./PreviewPane";
 import { SourcesPanel } from "./SourcesPanel";
 import { StyleProfileReport } from "./StyleProfileReport";
 
@@ -8,7 +12,29 @@ interface ArchiveReportProps {
   readonly onReset: () => void;
 }
 
+type Sources = Readonly<Record<string, string>>;
+
 export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
+  // Lifted out of the panel because the preview compiles what the reader is
+  // looking at, not what the converter first produced.
+  const [sources, setSources] = useState<Sources>(result.sources);
+
+  const edit = useCallback((path: string, content: string) => {
+    setSources((current) =>
+      current[path] === content ? current : { ...current, [path]: content },
+    );
+  }, []);
+
+  const revert = useCallback(
+    () => setSources(result.sources),
+    [result.sources],
+  );
+
+  const edited = useMemo(
+    () => Object.keys(sources).some((k) => sources[k] !== result.sources[k]),
+    [sources, result.sources],
+  );
+
   return (
     <section className="space-y-8">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
@@ -35,7 +61,16 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
         styleUsage={result.styleUsage}
       />
 
-      <SourcesPanel filename={result.filename} sources={result.sources} />
+      <div className="grid gap-8 xl:grid-cols-2">
+        <SourcesPanel
+          filename={result.filename}
+          sources={sources}
+          onEdit={edit}
+          onRevert={revert}
+          edited={edited}
+        />
+        <PreviewPane sources={sources} />
+      </div>
 
       <details className="group rounded-xl border border-zinc-200 dark:border-zinc-800">
         <summary className="cursor-pointer px-4 py-3 text-xs font-medium tracking-wide text-zinc-500 uppercase transition-colors duration-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">

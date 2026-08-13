@@ -1,15 +1,25 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { LatexEditor } from "./LatexEditor";
 
 interface SourcesPanelProps {
   readonly filename: string;
   readonly sources: Readonly<Record<string, string>>;
+  readonly onEdit: (path: string, content: string) => void;
+  readonly onRevert: () => void;
+  readonly edited: boolean;
 }
 
 type DownloadState = "idle" | "packaging" | "failed";
 
-export function SourcesPanel({ filename, sources }: SourcesPanelProps) {
+export function SourcesPanel({
+  filename,
+  sources,
+  onEdit,
+  onRevert,
+  edited,
+}: SourcesPanelProps) {
   const names = Object.keys(sources);
   const [active, setActive] = useState(names[0] ?? "");
   const [state, setState] = useState<DownloadState>("idle");
@@ -33,25 +43,41 @@ export function SourcesPanel({ filename, sources }: SourcesPanelProps) {
     }
   }, [filename, sources]);
 
+  const edit = useCallback(
+    (content: string) => onEdit(active, content),
+    [onEdit, active],
+  );
+
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-xs font-medium tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
           Generated LaTeX
         </h3>
-        <button
-          type="button"
-          onClick={download}
-          disabled={state === "packaging"}
-          className="rounded-full bg-violet-600 px-5 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-violet-500 disabled:opacity-60"
-        >
-          {state === "packaging" ? "Packaging…" : "Download .zip"}
-        </button>
+        <div className="flex items-center gap-3">
+          {edited && (
+            <button
+              type="button"
+              onClick={onRevert}
+              className="text-sm text-zinc-600 underline underline-offset-4 transition-colors duration-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            >
+              Revert edits
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={download}
+            disabled={state === "packaging"}
+            className="rounded-full bg-violet-600 px-5 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-violet-500 disabled:opacity-60"
+          >
+            {state === "packaging" ? "Packaging…" : "Download .zip"}
+          </button>
+        </div>
       </div>
 
       {state === "failed" && (
         <p role="alert" className="text-sm text-red-700 dark:text-red-300">
-          Packaging failed. The sources above are still what would be sent.
+          Packaging failed. The sources below are still what would be sent.
         </p>
       )}
 
@@ -73,9 +99,11 @@ export function SourcesPanel({ filename, sources }: SourcesPanelProps) {
             </button>
           ))}
         </div>
-        <pre className="max-h-96 overflow-auto bg-zinc-50 p-4 font-mono text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-200">
-          {sources[active] ?? ""}
-        </pre>
+        <LatexEditor
+          path={active}
+          value={sources[active] ?? ""}
+          onChange={edit}
+        />
       </div>
     </section>
   );

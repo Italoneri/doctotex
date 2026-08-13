@@ -14,14 +14,26 @@ browser before download.
 
 ## Status
 
-**Phase 2.** Upload a `.docx` and it comes back as a `doctotex.cls` and a
-`main.tex` that compile under pdfLaTeX, downloadable as a zip. Tables, images
-and equations are not carried across yet.
+**Phase 3 — the MVP.** Upload a `.docx` and it comes back as a `doctotex.cls`
+and a `main.tex`, editable in the browser, compiled to a PDF shown beside the
+code, and downloadable as a zip. Tables, images and equations are not carried
+across yet.
+
+The preview is the real artifact: `POST /api/preview` runs pdfLaTeX over the
+text currently in the editor and answers with the PDF itself, so what you look
+at and what you download come out of the same engine. Editing debounces, and one
+compile runs at a time — the container keeps going whatever the browser does, so
+a second request mid-compile would buy nothing and cost a container.
 
 Compilation is verified by the test suite against the real engine, not
 asserted about: `lib/latex/compile.test.ts` runs pdfLaTeX in the texlive
 container and fails on a non-zero exit. It skips where no Docker daemon is
 reachable.
+
+Monaco is served from `public/monaco`, vendored on install by
+`scripts/vendor-monaco.mjs`. The default is a CDN fetch at runtime, which makes
+an offline machine show an empty box and puts a third party in the path of every
+session.
 
 To read the generated output rather than assert about it:
 
@@ -50,13 +62,17 @@ npm run dev      # http://localhost:3000
 ```
 app/
   page.tsx                 upload and orchestration
-  api/convert/route.ts     docx -> ZIP        (nodejs runtime)
-components/                Dropzone, ArchiveReport
+  api/convert/route.ts     docx -> StyleProfile + sources   (nodejs runtime)
+  api/preview/route.ts     sources -> PDF                   (nodejs runtime)
+  api/bundle/route.ts      sources -> ZIP                   (nodejs runtime)
+components/                Dropzone, ArchiveReport, LatexEditor, PreviewPane
 lib/
   docx/                    unzip, part reading, XML parsing
+  editor/                  Monaco's LaTeX grammar
   extract/                 units, style cascade, page, typography, headings
   omml/                    OMML -> LaTeX walker
-  latex/                   .cls and .tex generation, ZIP assembly
+  latex/                   .cls and .tex generation, compilation, ZIP assembly
+scripts/                   vendor-monaco.mjs
 templates/                 doctotex.cls skeleton
 fixtures/                  real .docx used by the tests
 docker/                    texlive compilation wrapper
@@ -66,15 +82,15 @@ Tests sit next to the code they cover (`upload.test.ts` beside `upload.ts`).
 
 ## Roadmap
 
-| Phase | Scope                                                                     | State               |
-| ----- | ------------------------------------------------------------------------- | ------------------- |
-| 0     | Setup, upload, archive inspection                                         | done                |
-| 1     | Parse margins, typography, colours, heading hierarchy into `StyleProfile` | done                |
-| 2     | Generate `doctotex.cls` + `main.tex`, assemble the ZIP                    | done                |
-| 3     | Monaco code preview + server-side PDF rendering                           | next, MVP ends here |
-| 4     | Config panel: compiler, bibliography, output shape                        |                     |
-| 5     | Tables, images, equations (OMML)                                          |                     |
-| 6     | Visual polish                                                             |                     |
+| Phase | Scope                                                                     | State     |
+| ----- | ------------------------------------------------------------------------- | --------- |
+| 0     | Setup, upload, archive inspection                                         | done      |
+| 1     | Parse margins, typography, colours, heading hierarchy into `StyleProfile` | done      |
+| 2     | Generate `doctotex.cls` + `main.tex`, assemble the ZIP                    | done      |
+| 3     | Monaco code preview + server-side PDF rendering                           | done, MVP |
+| 4     | Config panel: compiler, bibliography, output shape                        | next      |
+| 5     | Tables, images, equations (OMML)                                          |           |
+| 6     | Visual polish                                                             |           |
 
 ## Toolchain decisions
 

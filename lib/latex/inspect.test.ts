@@ -37,10 +37,14 @@ describe.skipIf(!enabled)("inspect", () => {
       }
 
       const result = await compile(sources, MAIN_FILE);
-      if (result.pdf) {
+      if (result.kind === "compiled") {
         await writeFile(new URL("main.pdf", OUT), result.pdf);
       }
-      await writeFile(new URL("main.log", OUT), result.log, "utf8");
+      await writeFile(
+        new URL("main.log", OUT),
+        result.kind === "unavailable" ? result.reason : result.log,
+        "utf8",
+      );
     },
   );
 });
