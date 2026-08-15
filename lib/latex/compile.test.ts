@@ -13,6 +13,7 @@ import {
   ENGINES,
   type Bibliography,
   type GenerationOptions,
+  type Layout,
 } from "./options";
 import { MAIN_FILE } from "./tex";
 
@@ -165,48 +166,117 @@ async function expectCompiles(
   expect(result.pdf.length).toBeGreaterThan(1000);
 }
 
-describe.skipIf(!dockerUp)("every option compiles", () => {
-  it.each(ENGINES)("under %s", MATRIX_TIMEOUT, async (engine) => {
-    await expectCompiles({ engine });
-  });
+const BIBLIOGRAPHIES: readonly Bibliography[] = [
+  { backend: "none" },
+  { backend: "biblatex", style: "apa" },
+  { backend: "biblatex", style: "ieee" },
+  { backend: "biblatex", style: "abnt" },
+  { backend: "natbib", style: "apa" },
+  { backend: "natbib", style: "ieee" },
+  { backend: "natbib", style: "abnt" },
+];
 
-  const bibliographies: readonly Bibliography[] = [
-    { backend: "biblatex", style: "apa" },
-    { backend: "biblatex", style: "ieee" },
-    { backend: "biblatex", style: "abnt" },
-    { backend: "natbib", style: "apa" },
-    { backend: "natbib", style: "ieee" },
-    { backend: "natbib", style: "abnt" },
+const LAYOUTS: readonly Layout[] = ["multi", "single"];
+
+/**
+ * The whole cross product is 42 compiles, which is minutes of container time on
+ * every run of the suite. `DOCTOTEX_MATRIX=full npm test` asks for it; the
+ * default is the smaller set below.
+ */
+const exhaustive = process.env.DOCTOTEX_MATRIX === "full";
+
+/**
+ * One case per option, plus the crossings that can actually break.
+ *
+ * A cover of each option in isolation misses a pair that only fails together,
+ * and fontspec beside a bibliography is where that risk sits: both rewrite the
+ * preamble, and the tools between the passes read what they leave behind. The
+ * rest of the product is independent by construction — the layout decides which
+ * file the preamble lands in and nothing else reads that decision.
+ */
+function matrix(): readonly GenerationOptions[] {
+  if (exhaustive) {
+    return ENGINES.flatMap((engine) =>
+      BIBLIOGRAPHIES.flatMap((bibliography) =>
+        LAYOUTS.map((layout) => ({ engine, bibliography, layout })),
+      ),
+    );
+  }
+
+  const perOption: readonly GenerationOptions[] = [
+    ...ENGINES.map((engine) => ({ ...DEFAULT_OPTIONS, engine })),
+    ...BIBLIOGRAPHIES.map((bibliography) => ({
+      ...DEFAULT_OPTIONS,
+      bibliography,
+    })),
+    ...LAYOUTS.map((layout) => ({ ...DEFAULT_OPTIONS, layout })),
   ];
 
-  it.each(bibliographies)(
-    "with $backend in $style",
+  const crossings: readonly GenerationOptions[] = [
+    {
+      engine: "xelatex",
+      bibliography: { backend: "biblatex", style: "apa" },
+      layout: "multi",
+    },
+    {
+      engine: "xelatex",
+      bibliography: { backend: "natbib", style: "abnt" },
+      layout: "multi",
+    },
+    {
+      engine: "lualatex",
+      bibliography: { backend: "biblatex", style: "ieee" },
+      layout: "multi",
+    },
+    {
+      engine: "lualatex",
+      bibliography: { backend: "natbib", style: "apa" },
+      layout: "multi",
+    },
+    {
+      engine: "xelatex",
+      bibliography: { backend: "biblatex", style: "apa" },
+      layout: "single",
+    },
+  ];
+
+  return [...perOption, ...crossings];
+}
+
+function label({ engine, bibliography, layout }: GenerationOptions): string {
+  const cites =
+    bibliography.backend === "none"
+      ? "no bibliography"
+      : `${bibliography.backend}/${bibliography.style}`;
+  return `${engine}, ${cites}, ${layout}`;
+}
+
+// Pure, so it runs whether or not a daemon is up.
+describe("the generated file list", () => {
+  it("drops the class when the preamble is inlined", () => {
+    expect([...sourcesFor({ layout: "single" }).sources.keys()]).toEqual([
+      MAIN_FILE,
+    ]);
+  });
+
+  it("adds the bib file only when something will read it", () => {
+    expect([
+      ...sourcesFor({
+        layout: "single",
+        bibliography: { backend: "biblatex", style: "apa" },
+      }).sources.keys(),
+    ]).toEqual([MAIN_FILE, BIB_FILE]);
+  });
+});
+
+describe.skipIf(!dockerUp)("every option compiles", () => {
+  it.each(matrix().map((options) => [label(options), options] as const))(
+    "%s",
     MATRIX_TIMEOUT,
-    async (bibliography) => {
-      await expectCompiles({ bibliography });
+    async (_name, options) => {
+      await expectCompiles(options);
     },
   );
-
-  it("as a single file", MATRIX_TIMEOUT, async () => {
-    const { sources } = sourcesFor({ layout: "single" });
-
-    // The point of the layout is that there is nothing else to carry around.
-    expect([...sources.keys()]).toEqual([MAIN_FILE]);
-    await expectCompiles({ layout: "single" });
-  });
-
-  it("as a single file with a bibliography", MATRIX_TIMEOUT, async () => {
-    const { sources } = sourcesFor({
-      layout: "single",
-      bibliography: { backend: "biblatex", style: "apa" },
-    });
-
-    expect([...sources.keys()]).toEqual([MAIN_FILE, BIB_FILE]);
-    await expectCompiles({
-      layout: "single",
-      bibliography: { backend: "biblatex", style: "apa" },
-    });
-  });
 });
 
 describe.skipIf(!dockerUp)("compile", () => {

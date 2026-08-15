@@ -3,7 +3,14 @@ import type { StyleProfile } from "@/lib/extract/types";
 import { bibliographySetup } from "./bib";
 import { BANNER, CLASS_NAME, preambleLines, type ClassInput } from "./cls";
 import { escapeLatex } from "./escape";
-import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
+import {
+  bibToolFor,
+  compileCommands,
+  DEFAULT_OPTIONS,
+  ENGINE_LABELS,
+  usesFontspec,
+  type GenerationOptions,
+} from "./options";
 
 export const MAIN_FILE = "main.tex";
 
@@ -50,16 +57,53 @@ function opening(
   input: DocumentInput,
   options: GenerationOptions,
 ): readonly string[] {
+  const header = [...BANNER, ...compileHeader(options), ""];
+
   if (options.layout === "multi") {
-    return [`\\documentclass{${CLASS_NAME}}`];
+    return [...header, `\\documentclass{${CLASS_NAME}}`];
   }
 
   return [
-    ...BANNER,
+    ...header,
     "\\documentclass{article}",
     "",
     ...asDocumentPreamble(preambleLines(input)),
   ];
+}
+
+/**
+ * What to run, written into the file you run it on.
+ *
+ * The engine is picked in a browser and the archive is opened somewhere else
+ * entirely, often much later. Without this, choosing XeLaTeX and then reaching
+ * for pdfLaTeX out of habit produces a page of errors about fontspec that read
+ * as though the template itself were broken.
+ */
+function compileHeader(options: GenerationOptions): readonly string[] {
+  const bibTool = bibToolFor(options.bibliography);
+  const commands = compileCommands(MAIN_FILE, {
+    engine: options.engine,
+    bibTool,
+  });
+
+  const lines = ["%%", "%% Compile with:", ...commands.map((c) => `%%   ${c}`)];
+
+  if (usesFontspec(options.engine)) {
+    lines.push(
+      `%% ${ENGINE_LABELS[options.engine]} is not interchangeable with pdfLaTeX here: the preamble`,
+      "%% selects fonts by name through fontspec, which pdfLaTeX cannot load.",
+    );
+  }
+  if (bibTool !== "none") {
+    lines.push(
+      "%% The repeated passes are not redundant. The first records which keys were",
+      `%% cited, ${bibTool} turns those into a .bbl, and the last two resolve the labels`,
+      `%% it introduces. Until something is cited, ${bibTool} reports an error and exits`,
+      "%% non-zero; the engine passes still succeed and the document still builds.",
+    );
+  }
+
+  return lines;
 }
 
 /**

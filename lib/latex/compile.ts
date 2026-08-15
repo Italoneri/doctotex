@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SourceFiles } from "./bundle";
-import type { BibTool, Engine } from "./options";
+import { compileCommands, type BibTool, type Engine } from "./options";
 
 const run = promisify(execFile);
 
@@ -14,6 +14,9 @@ export const TEXLIVE_IMAGE = "texlive/texlive:latest";
 const COMPILE_TIMEOUT_MS = 180_000;
 
 const DOCKER_PROBE_TIMEOUT_MS = 10_000;
+
+/** Never prompt, and stop at the first error rather than cascading. */
+const UNATTENDED_FLAGS = ["-interaction=nonstopmode", "-halt-on-error"];
 
 const WORKDIR = "/work";
 
@@ -117,35 +120,30 @@ async function runEngine(
 }
 
 /**
- * The commands the container runs, in order.
- *
- * A bibliography takes three engine passes around the tool that builds it: the
- * first records which keys were cited, the tool turns those into a .bbl, and
- * the last two resolve the labels the .bbl introduces. Without one a single
- * pass is enough — nothing generated here carries a table of contents or a
- * cross-reference that would need a second look.
+ * The same command list the generated document advertises, wrapped in the shell
+ * that runs it unattended.
  *
  * `entry` arrives from the browser and is checked before it gets here: every
  * segment matches `[A-Za-z0-9._-]` and the name ends in `.tex`, which leaves no
  * character the shell would read as syntax.
  */
 function passes(entry: string, engine: Engine, bibTool: BibTool): string {
-  const enginePass = `${engine} -interaction=nonstopmode -halt-on-error ${entry}`;
-  if (bibTool === "none") {
-    return enginePass;
+  const commands = compileCommands(entry, {
+    engine,
+    bibTool,
+    engineFlags: UNATTENDED_FLAGS,
+  });
+  if (commands.length === 1) {
+    return commands[0];
   }
 
   // biber and bibtex both exit non-zero when the document cites nothing, which
   // is the ordinary state of a freshly generated template. Whether the document
   // is sound is decided by the engine passes, not by them.
-  const base = entry.replace(/\.tex$/, "");
-  return [
-    "set -e",
-    enginePass,
-    `${bibTool} ${base} || true`,
-    enginePass,
-    enginePass,
-  ].join("; ");
+  const tolerated = commands.map((command) =>
+    command.startsWith(bibTool) ? `${command} || true` : command,
+  );
+  return ["set -e", ...tolerated].join("; ");
 }
 
 interface ProcessFailure {

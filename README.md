@@ -34,14 +34,26 @@ travels with the request rather than being inferred from the sources — a
 `fontspec` preamble read by pdfLaTeX fails in a way that looks like the reader's
 mistake. Editing debounces, and one compile runs at a time.
 
+`main.tex` carries the commands that build it, because the engine is chosen in a
+browser and the archive is opened somewhere else. Reaching for pdfLaTeX out of
+habit on a `fontspec` preamble produces errors that read as though the template
+were broken; the same list drives the preview container, so the advice cannot
+drift from what actually ran.
+
 Compilation is verified by the test suite against the real engine, not asserted
-about: `lib/latex/compile.test.ts` compiles one case per option — each of the
-three engines, each of the six backend-and-style pairs, and both layouts — in the
-texlive container, and fails on a non-zero exit. One case per option rather than
-the full cross product: eleven compiles instead of forty-two, and a break in any
-single option still shows up. That matrix runs over a profile the test builds, so
-it does not go quiet when no sample `.docx` is present. It skips where no Docker
-daemon is reachable.
+about: `lib/latex/compile.test.ts` compiles in the texlive container and fails on
+a non-zero exit. By default it runs one case per option — each of the three
+engines, each of the seven bibliography settings, both layouts — plus the five
+crossings that can plausibly fail together, all of them fontspec beside a
+bibliography, since both rewrite the preamble the inter-pass tools read. Sixteen
+compiles instead of forty-two.
+
+```bash
+DOCTOTEX_MATRIX=full npm run test   # the whole cross product, 42 compiles
+```
+
+The matrix runs over a profile the test builds, so it does not go quiet when no
+sample `.docx` is present. It skips where no Docker daemon is reachable.
 
 Monaco is served from `public/monaco`, vendored on install by
 `scripts/vendor-monaco.mjs`. The default is a CDN fetch at runtime, which makes
@@ -83,15 +95,24 @@ lib/
   docx/                    unzip, part reading, XML parsing
   editor/                  Monaco's LaTeX grammar
   extract/                 units, style cascade, page, typography, headings
-  omml/                    OMML -> LaTeX walker
-  latex/                   .cls and .tex generation, compilation, ZIP assembly
+  latex/                   options, .cls and .tex generation, compilation, ZIP
 scripts/                   vendor-monaco.mjs
-templates/                 doctotex.cls skeleton
 fixtures/                  real .docx used by the tests
-docker/                    texlive compilation wrapper
 ```
 
 Tests sit next to the code they cover (`upload.test.ts` beside `upload.ts`).
+
+Three directories the original plan called for are not here. `templates/` was to
+hold a `doctotex.cls` skeleton, but the class is assembled from the style profile
+rather than filled into a template, so there is nothing static to keep.
+`docker/` was to hold a shell wrapper, which `lib/latex/compile.ts` invokes
+directly instead. `lib/omml/` belongs to phase 5 and will arrive with it.
+
+Nothing validates with Zod. It was in the plan for the boundaries, and the
+boundaries — `lib/latex/payload.ts` and `lib/latex/options.ts` — ended up as
+hand-written total functions returning `T | undefined`, which the callers turn
+into a 400. Keeping a schema library that nothing imported would have been a
+dependency shipped for a paragraph in a plan.
 
 ## Roadmap
 

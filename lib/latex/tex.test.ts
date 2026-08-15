@@ -57,6 +57,46 @@ describe("document shell", () => {
   });
 });
 
+describe("compile instructions", () => {
+  // The archive is opened away from the browser that chose the engine, so the
+  // choice has to travel inside the file it applies to.
+  it("names the single command when there is nothing else to run", () => {
+    const tex = render([]);
+
+    expect(tex).toContain("%% Compile with:");
+    expect(tex).toContain("%%   pdflatex main.tex");
+  });
+
+  it("warns that a fontspec preamble is not pdfLaTeX's", () => {
+    const tex = render([], { ...DEFAULT_OPTIONS, engine: "lualatex" });
+
+    expect(tex).toContain("%%   lualatex main.tex");
+    expect(tex).toContain("not interchangeable with pdfLaTeX");
+  });
+
+  it("spells out the passes a bibliography needs", () => {
+    const tex = render([], {
+      ...DEFAULT_OPTIONS,
+      bibliography: { backend: "biblatex", style: "apa" },
+    });
+
+    expect(tex).toContain("%%   biber main");
+    // Three engine passes around the tool, so the first line repeats twice more.
+    expect(tex.split("%%   pdflatex main.tex").length - 1).toBe(3);
+    // The tool failing on an uncited document is expected, and saying so here
+    // saves the reader diagnosing a build that in fact worked.
+    expect(tex).toContain("exits");
+  });
+
+  it("is in the file that gets compiled, whichever layout is chosen", () => {
+    for (const layout of ["multi", "single"] as const) {
+      expect(render([], { ...DEFAULT_OPTIONS, layout })).toContain(
+        "%% Compile with:",
+      );
+    }
+  });
+});
+
 describe("the single-file layout", () => {
   const single = { ...DEFAULT_OPTIONS, layout: "single" } as const;
 

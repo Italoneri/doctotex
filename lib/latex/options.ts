@@ -78,6 +78,41 @@ export function bibToolFor(bibliography: Bibliography): BibTool {
   }
 }
 
+export interface CommandOptions {
+  readonly engine: Engine;
+  readonly bibTool: BibTool;
+  /** Flags the engine passes carry. A person running this by hand wants none. */
+  readonly engineFlags?: readonly string[];
+}
+
+/**
+ * What has to run, in order, to turn `entry` into a PDF.
+ *
+ * One list serves the container and the instructions written into the generated
+ * document. Keeping them apart would let the advice drift from what the preview
+ * actually did, and the reader would find that out only after the download.
+ */
+export function compileCommands(
+  entry: string,
+  { engine, bibTool, engineFlags = [] }: CommandOptions,
+): readonly string[] {
+  const enginePass = [engine, ...engineFlags, entry].join(" ");
+  if (bibTool === "none") {
+    return [enginePass];
+  }
+
+  // Three passes around the tool: the first records which keys were cited, the
+  // tool turns those into a .bbl, and the last two resolve the labels it
+  // introduces. TeX writes its .aux under the entry's base name, which is what
+  // the tool is pointed at.
+  return [
+    enginePass,
+    `${bibTool} ${entry.replace(/\.tex$/, "")}`,
+    enginePass,
+    enginePass,
+  ];
+}
+
 /**
  * Narrows an untrusted value to the options, or returns undefined so the caller
  * answers 400. An absent value is not an error: it means the defaults, which is
