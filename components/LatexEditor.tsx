@@ -1,7 +1,12 @@
 "use client";
 
-import Editor, { loader, type Monaco } from "@monaco-editor/react";
-import { useCallback, useSyncExternalStore } from "react";
+import Editor, {
+  loader,
+  type Monaco,
+  type OnMount,
+} from "@monaco-editor/react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import type { editor } from "monaco-editor";
 import {
   LATEX_LANGUAGE_ID,
   latexConfiguration,
@@ -25,6 +30,24 @@ interface LatexEditorProps {
 
 export function LatexEditor({ path, value, onChange }: LatexEditorProps) {
   const dark = usePrefersDark();
+  const editorRef = useRef<editor.IStandaloneCodeEditor>(null);
+
+  // Monaco reaches its model asynchronously, so the first alignment happens
+  // when it arrives rather than when this component first renders.
+  const mount = useCallback<OnMount>(
+    (instance) => {
+      editorRef.current = instance;
+      align(instance, value);
+    },
+    [value],
+  );
+
+  useEffect(() => {
+    const instance = editorRef.current;
+    if (instance) {
+      align(instance, value);
+    }
+  }, [value, path]);
 
   const register = useCallback((monaco: Monaco) => {
     const known = monaco.languages
@@ -54,6 +77,7 @@ export function LatexEditor({ path, value, onChange }: LatexEditorProps) {
       language={LATEX_LANGUAGE_ID}
       theme={dark ? "vs-dark" : "vs"}
       beforeMount={register}
+      onMount={mount}
       onChange={handleChange}
       height="26rem"
       loading={
@@ -73,6 +97,21 @@ export function LatexEditor({ path, value, onChange }: LatexEditorProps) {
       }}
     />
   );
+}
+
+/**
+ * Monaco owns a model per path and treats that model, not the prop, as the
+ * text. Keeping the prop out of it is what stops a keystroke being echoed back
+ * over the cursor — and it is also why a model that outlives the component it
+ * was created for reappears carrying the previous file. Reverting an edit and
+ * regenerating from new settings both replace the text from outside the editor,
+ * so both have to be said out loud.
+ */
+function align(instance: editor.IStandaloneCodeEditor, value: string): void {
+  const model = instance.getModel();
+  if (model && model.getValue() !== value) {
+    model.setValue(value);
+  }
 }
 
 /**

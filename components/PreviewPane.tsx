@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PreviewFailure } from "@/app/api/preview/route";
+import { ENGINE_LABELS, type GenerationOptions } from "@/lib/latex/options";
 
 /** Long enough that a burst of typing costs one container, not twenty. */
 const DEBOUNCE_MS = 1200;
@@ -16,9 +17,10 @@ type Sources = Readonly<Record<string, string>>;
 
 interface PreviewPaneProps {
   readonly sources: Sources;
+  readonly options: GenerationOptions;
 }
 
-export function PreviewPane({ sources }: PreviewPaneProps) {
+export function PreviewPane({ sources, options }: PreviewPaneProps) {
   const [state, setState] = useState<PreviewState>({ status: "compiling" });
   // What the visible preview was built from. Comparing it to the current
   // sources is what "stale" means, so it is derived rather than tracked
@@ -53,7 +55,7 @@ export function PreviewPane({ sources }: PreviewPaneProps) {
         const snapshot = latest.current;
 
         setState({ status: "compiling" });
-        const next = await requestPreview(snapshot);
+        const next = await requestPreview(snapshot, options);
 
         if (!alive.current) {
           revoke(next);
@@ -65,7 +67,7 @@ export function PreviewPane({ sources }: PreviewPaneProps) {
     } finally {
       busy.current = false;
     }
-  }, []);
+  }, [options]);
 
   useEffect(() => {
     latest.current = sources;
@@ -85,7 +87,11 @@ export function PreviewPane({ sources }: PreviewPaneProps) {
         <h3 className="text-xs font-medium tracking-wide text-zinc-500 uppercase dark:text-zinc-400">
           Compiled preview
         </h3>
-        <Status state={state} stale={renderedFrom !== sources} />
+        <Status
+          state={state}
+          stale={renderedFrom !== sources}
+          engine={ENGINE_LABELS[options.engine]}
+        />
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
@@ -98,14 +104,16 @@ export function PreviewPane({ sources }: PreviewPaneProps) {
 function Status({
   state,
   stale,
+  engine,
 }: {
   readonly state: PreviewState;
   readonly stale: boolean;
+  readonly engine: string;
 }) {
   if (state.status === "compiling") {
     return (
       <span role="status" className="text-sm text-zinc-500 dark:text-zinc-400">
-        Running pdfLaTeX&hellip;
+        Running {engine}&hellip;
       </span>
     );
   }
@@ -172,13 +180,16 @@ function Body({ state }: { readonly state: PreviewState }) {
   );
 }
 
-async function requestPreview(sources: Sources): Promise<PreviewState> {
+async function requestPreview(
+  sources: Sources,
+  options: GenerationOptions,
+): Promise<PreviewState> {
   let response: Response;
   try {
     response = await fetch("/api/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources }),
+      body: JSON.stringify({ sources, options }),
     });
   } catch {
     return {

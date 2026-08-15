@@ -32,6 +32,12 @@ describe("input rejection", () => {
       "an entry outside the sources",
       { sources: { "main.tex": "x" }, entry: "other.tex" },
     ],
+    // The engine is what the request asks for, not what the sources look like,
+    // so an engine this build cannot run has to be refused rather than guessed.
+    [
+      "an engine outside the list",
+      { sources: { "main.tex": "x" }, options: { engine: "pdftex" } },
+    ],
   ];
 
   for (const [name, body] of cases) {
@@ -75,6 +81,27 @@ describe.skipIf(!dockerUp)("compiling", () => {
     // Every PDF opens with %PDF-.
     expect(String.fromCharCode(...pdf.slice(0, 5))).toBe("%PDF-");
   });
+
+  it(
+    "compiles with the engine that was asked for",
+    COMPILE_TIMEOUT,
+    async () => {
+      // fontspec is the marker: it loads under XeLaTeX and stops pdfLaTeX dead,
+      // so a pass here means the request picked the engine rather than the default.
+      const xetex =
+        "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nHello.\n\\end{document}\n";
+
+      const response = await POST(
+        post({
+          sources: { "main.tex": xetex },
+          options: { engine: "xelatex" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Type")).toBe("application/pdf");
+    },
+  );
 
   it("answers a rejected document with its log", COMPILE_TIMEOUT, async () => {
     const broken =

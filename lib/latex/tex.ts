@@ -1,7 +1,9 @@
 import type { Paragraph, TextRun } from "@/lib/extract/body";
 import type { StyleProfile } from "@/lib/extract/types";
-import { CLASS_NAME } from "./cls";
+import { bibliographySetup } from "./bib";
+import { BANNER, CLASS_NAME, preambleLines, type ClassInput } from "./cls";
 import { escapeLatex } from "./escape";
+import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
 
 export const MAIN_FILE = "main.tex";
 
@@ -14,22 +16,59 @@ const SECTIONING = [
   "subparagraph",
 ] as const;
 
-export function generateDocument(
-  profile: StyleProfile,
-  paragraphs: readonly Paragraph[],
-): string {
-  const roles = roleByStyleId(profile);
+export interface DocumentInput extends ClassInput {
+  readonly paragraphs: readonly Paragraph[];
+}
+
+export function generateDocument(input: DocumentInput): string {
+  const options = input.options ?? DEFAULT_OPTIONS;
+  const roles = roleByStyleId(input.profile);
+  const bibliography = bibliographySetup(options.bibliography);
 
   return [
-    `\\documentclass{${CLASS_NAME}}`,
+    ...opening(input, options),
     "",
     "\\begin{document}",
     "",
-    ...paragraphs.map((paragraph) => render(paragraph, roles)).filter(Boolean),
+    ...input.paragraphs
+      .map((paragraph) => render(paragraph, roles))
+      .filter(Boolean),
+    ...(bibliography.body.length === 0 ? [] : ["", ...bibliography.body]),
     "",
     "\\end{document}",
     "",
   ].join("\n");
+}
+
+/**
+ * Everything above `\begin{document}`.
+ *
+ * The multi-file layout points at the generated class; the single-file layout
+ * has no class to point at, so the same preamble is inlined here.
+ */
+function opening(
+  input: DocumentInput,
+  options: GenerationOptions,
+): readonly string[] {
+  if (options.layout === "multi") {
+    return [`\\documentclass{${CLASS_NAME}}`];
+  }
+
+  return [
+    ...BANNER,
+    "\\documentclass{article}",
+    "",
+    ...asDocumentPreamble(preambleLines(input)),
+  ];
+}
+
+/**
+ * A class writes `\RequirePackage`; a document preamble spells the same
+ * operation `\usepackage`. Either is legal in either place, but generated code
+ * that reads the way handwritten code reads is easier to take over.
+ */
+function asDocumentPreamble(lines: readonly string[]): readonly string[] {
+  return lines.map((line) => line.replace(/^\\RequirePackage/, "\\usepackage"));
 }
 
 type Role =

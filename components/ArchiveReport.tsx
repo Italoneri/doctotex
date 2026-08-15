@@ -69,7 +69,9 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
           onRevert={revert}
           edited={edited}
         />
-        <PreviewPane sources={sources} />
+        {/* The options the sources were generated with, not the ones the panel
+            currently shows: the preview compiles what is on screen. */}
+        <PreviewPane sources={sources} options={result.options} />
       </div>
 
       <details className="group rounded-xl border border-zinc-200 dark:border-zinc-800">

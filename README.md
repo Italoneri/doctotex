@@ -14,21 +14,34 @@ browser before download.
 
 ## Status
 
-**Phase 3 — the MVP.** Upload a `.docx` and it comes back as a `doctotex.cls`
-and a `main.tex`, editable in the browser, compiled to a PDF shown beside the
-code, and downloadable as a zip. Tables, images and equations are not carried
-across yet.
+**Phase 4 — the config panel.** Upload a `.docx` and it comes back as a
+`doctotex.cls` and a `main.tex`, editable in the browser, compiled to a PDF shown
+beside the code, and downloadable as a zip. Four settings change what is
+generated; each one re-runs the conversion over the file the browser already
+holds. Tables, images and equations are not carried across yet.
 
-The preview is the real artifact: `POST /api/preview` runs pdfLaTeX over the
-text currently in the editor and answers with the PDF itself, so what you look
-at and what you download come out of the same engine. Editing debounces, and one
-compile runs at a time — the container keeps going whatever the browser does, so
-a second request mid-compile would buy nothing and cost a container.
+| Setting        | Choices                            | What changes                                                          |
+| -------------- | ---------------------------------- | --------------------------------------------------------------------- |
+| Engine         | pdfLaTeX, XeLaTeX, LuaLaTeX        | Font selection: metric-clone packages, or `fontspec` by family name   |
+| Bibliography   | none, `biblatex` (biber), `natbib` | Package loading, `references.bib`, extra engine passes when compiling |
+| Citation style | APA, IEEE, ABNT                    | `style=` for biblatex; the `.bst` for natbib                          |
+| Files          | class + `main.tex`, one `main.tex` | Whether the preamble lives in a `.cls` or inside the document         |
 
-Compilation is verified by the test suite against the real engine, not
-asserted about: `lib/latex/compile.test.ts` runs pdfLaTeX in the texlive
-container and fails on a non-zero exit. It skips where no Docker daemon is
-reachable.
+The preview is the real artifact: `POST /api/preview` runs the selected engine
+over the text currently in the editor and answers with the PDF itself, so what
+you look at and what you download come out of the same engine. The engine
+travels with the request rather than being inferred from the sources — a
+`fontspec` preamble read by pdfLaTeX fails in a way that looks like the reader's
+mistake. Editing debounces, and one compile runs at a time.
+
+Compilation is verified by the test suite against the real engine, not asserted
+about: `lib/latex/compile.test.ts` compiles one case per option — each of the
+three engines, each of the six backend-and-style pairs, and both layouts — in the
+texlive container, and fails on a non-zero exit. One case per option rather than
+the full cross product: eleven compiles instead of forty-two, and a break in any
+single option still shows up. That matrix runs over a profile the test builds, so
+it does not go quiet when no sample `.docx` is present. It skips where no Docker
+daemon is reachable.
 
 Monaco is served from `public/monaco`, vendored on install by
 `scripts/vendor-monaco.mjs`. The default is a CDN fetch at runtime, which makes
@@ -65,7 +78,7 @@ app/
   api/convert/route.ts     docx -> StyleProfile + sources   (nodejs runtime)
   api/preview/route.ts     sources -> PDF                   (nodejs runtime)
   api/bundle/route.ts      sources -> ZIP                   (nodejs runtime)
-components/                Dropzone, ArchiveReport, LatexEditor, PreviewPane
+components/                Dropzone, ConfigPanel, ArchiveReport, LatexEditor, PreviewPane
 lib/
   docx/                    unzip, part reading, XML parsing
   editor/                  Monaco's LaTeX grammar
@@ -88,8 +101,8 @@ Tests sit next to the code they cover (`upload.test.ts` beside `upload.ts`).
 | 1     | Parse margins, typography, colours, heading hierarchy into `StyleProfile` | done      |
 | 2     | Generate `doctotex.cls` + `main.tex`, assemble the ZIP                    | done      |
 | 3     | Monaco code preview + server-side PDF rendering                           | done, MVP |
-| 4     | Config panel: compiler, bibliography, output shape                        | next      |
-| 5     | Tables, images, equations (OMML)                                          |           |
+| 4     | Config panel: compiler, bibliography, output shape                        | done      |
+| 5     | Tables, images, equations (OMML)                                          | next      |
 | 6     | Visual polish                                                             |           |
 
 ## Toolchain decisions

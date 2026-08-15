@@ -4,6 +4,11 @@ import { countStyleUsage, extractParagraphs } from "@/lib/extract/body";
 import { extractStyleProfile } from "@/lib/extract/profile";
 import type { StyleProfile } from "@/lib/extract/types";
 import { generateSources } from "@/lib/latex/bundle";
+import {
+  DEFAULT_OPTIONS,
+  readOptions,
+  type GenerationOptions,
+} from "@/lib/latex/options";
 
 // jszip and the XML parsers are Node-only; pin the runtime so a future edge
 // default never silently breaks the parsing pipeline.
@@ -26,6 +31,12 @@ export interface ConvertSuccess {
    * claim a structure the document does not have.
    */
   readonly styleUsage: Readonly<Record<string, number>>;
+  /**
+   * Echoed back so the preview compiles with the engine the sources were
+   * written for. A client that guesses would run pdfLaTeX over a fontspec
+   * preamble the first time the two fall out of step.
+   */
+  readonly options: GenerationOptions;
 }
 
 export interface ConvertFailure {
@@ -46,6 +57,14 @@ export async function POST(request: Request): Promise<Response> {
     return failure(describeRejection(rejection), 415);
   }
 
+  const options = readFormOptions(form.get("options"));
+  if (!options) {
+    return failure(
+      "The options field is not a selection this build offers.",
+      400,
+    );
+  }
+
   try {
     const archive = await openDocx(new Uint8Array(await file.arrayBuffer()));
     const profile = await extractStyleProfile(archive);
@@ -59,14 +78,35 @@ export async function POST(request: Request): Promise<Response> {
       sizeBytes: file.size,
       entries: archive.entries,
       profile,
-      sources: Object.fromEntries(generateSources(profile, paragraphs)),
+      sources: Object.fromEntries(
+        generateSources({ profile, paragraphs, options }),
+      ),
       styleUsage: Object.fromEntries(countStyleUsage(paragraphs)),
+      options,
     } satisfies ConvertSuccess);
   } catch (error) {
     if (error instanceof DocxFormatError) {
       return failure(error.message, 415);
     }
     throw error;
+  }
+}
+
+/**
+ * A multipart field is text or a file, so the selection travels as JSON in a
+ * string. An absent field is the defaults; a present one that does not parse is
+ * a caller bug and gets said so rather than silently becoming pdfLaTeX.
+ */
+function readFormOptions(
+  field: FormDataEntryValue | null,
+): GenerationOptions | undefined {
+  if (typeof field !== "string" || field === "") {
+    return DEFAULT_OPTIONS;
+  }
+  try {
+    return readOptions(JSON.parse(field));
+  } catch {
+    return undefined;
   }
 }
 

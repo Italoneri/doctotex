@@ -26,10 +26,10 @@ describe.skipIf(!enabled)("inspect", () => {
       const archive = await openDocx(await readFixture(FIXTURE));
       const documentXml =
         (await readTextPart(archive, "word/document.xml")) ?? "";
-      const sources = generateSources(
-        await extractStyleProfile(archive),
-        extractParagraphs(documentXml),
-      );
+      const sources = generateSources({
+        profile: await extractStyleProfile(archive),
+        paragraphs: extractParagraphs(documentXml),
+      });
 
       await mkdir(OUT, { recursive: true });
       for (const [name, content] of sources) {

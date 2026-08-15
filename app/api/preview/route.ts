@@ -1,4 +1,5 @@
 import { compile } from "@/lib/latex/compile";
+import { bibToolFor, readOptions } from "@/lib/latex/options";
 import { readEntry, readSources } from "@/lib/latex/payload";
 import { MAIN_FILE } from "@/lib/latex/tex";
 
@@ -47,6 +48,18 @@ export async function POST(request: Request): Promise<Response> {
     return invalid("The entry must name a .tex file present in the sources.");
   }
 
+  // The engine is not inferred from the sources. A fontspec preamble read by
+  // pdfLaTeX fails in a way that looks like the reader's mistake, so the
+  // selection that produced the sources travels with them.
+  const options = readOptions(
+    typeof payload === "object" && payload !== null
+      ? (payload as { options?: unknown }).options
+      : undefined,
+  );
+  if (!options) {
+    return invalid("The options are not a selection this build offers.");
+  }
+
   if (running >= MAX_CONCURRENT) {
     return failure(
       {
@@ -60,7 +73,10 @@ export async function POST(request: Request): Promise<Response> {
 
   running += 1;
   try {
-    const result = await compile(sources, entry);
+    const result = await compile(sources, entry, {
+      engine: options.engine,
+      bibTool: bibToolFor(options.bibliography),
+    });
 
     if (result.kind === "unavailable") {
       return failure(

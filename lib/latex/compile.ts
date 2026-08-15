@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SourceFiles } from "./bundle";
+import type { BibTool, Engine } from "./options";
 
 const run = promisify(execFile);
 
@@ -15,8 +16,6 @@ const COMPILE_TIMEOUT_MS = 180_000;
 const DOCKER_PROBE_TIMEOUT_MS = 10_000;
 
 const WORKDIR = "/work";
-
-export type Engine = "pdflatex" | "xelatex" | "lualatex";
 
 /**
  * Three outcomes, not two. A document TeX refuses and a daemon that never
@@ -35,6 +34,8 @@ export type CompileResult =
 
 export interface CompileOptions {
   readonly engine?: Engine;
+  /** Runs between the engine passes; `none` means a single pass. */
+  readonly bibTool?: BibTool;
   /** Overridable so a test can point at a command that is certain to be absent. */
   readonly docker?: string;
 }
@@ -69,8 +70,10 @@ export async function compile(
 async function runEngine(
   directory: string,
   entry: string,
-  { engine = "pdflatex", docker = "docker" }: CompileOptions,
+  { engine = "pdflatex", bibTool = "none", docker = "docker" }: CompileOptions,
 ): Promise<CompileResult> {
+  // Every pass runs inside one container. Starting a fresh one per pass would
+  // quadruple the startup cost and lose the .aux files between them.
   const args = [
     "run",
     "--rm",
@@ -80,14 +83,15 @@ async function runEngine(
     "-w",
     WORKDIR,
     TEXLIVE_IMAGE,
-    engine,
-    "-interaction=nonstopmode",
-    "-halt-on-error",
-    entry,
+    "sh",
+    "-c",
+    passes(entry, engine, bibTool),
   ];
 
+  const timeoutMs = COMPILE_TIMEOUT_MS * (bibTool === "none" ? 1 : 3);
+
   try {
-    await run(docker, args, { timeout: COMPILE_TIMEOUT_MS });
+    await run(docker, args, { timeout: timeoutMs });
   } catch (error) {
     // A non-zero exit is the normal way TeX reports a bad document, so the log
     // matters more than the exception. The log is also what tells the two
@@ -97,7 +101,7 @@ async function runEngine(
     if (isTimeout(error)) {
       return {
         kind: "unavailable",
-        reason: `The engine did not finish within ${COMPILE_TIMEOUT_MS / 1000}s.`,
+        reason: `The engine did not finish within ${timeoutMs / 1000}s.`,
       };
     }
     return log
@@ -110,6 +114,38 @@ async function runEngine(
 
   // A zero exit with no PDF is not success; nonstopmode can end that way.
   return pdf ? { kind: "compiled", log, pdf } : { kind: "rejected", log };
+}
+
+/**
+ * The commands the container runs, in order.
+ *
+ * A bibliography takes three engine passes around the tool that builds it: the
+ * first records which keys were cited, the tool turns those into a .bbl, and
+ * the last two resolve the labels the .bbl introduces. Without one a single
+ * pass is enough — nothing generated here carries a table of contents or a
+ * cross-reference that would need a second look.
+ *
+ * `entry` arrives from the browser and is checked before it gets here: every
+ * segment matches `[A-Za-z0-9._-]` and the name ends in `.tex`, which leaves no
+ * character the shell would read as syntax.
+ */
+function passes(entry: string, engine: Engine, bibTool: BibTool): string {
+  const enginePass = `${engine} -interaction=nonstopmode -halt-on-error ${entry}`;
+  if (bibTool === "none") {
+    return enginePass;
+  }
+
+  // biber and bibtex both exit non-zero when the document cites nothing, which
+  // is the ordinary state of a freshly generated template. Whether the document
+  // is sound is decided by the engine passes, not by them.
+  const base = entry.replace(/\.tex$/, "");
+  return [
+    "set -e",
+    enginePass,
+    `${bibTool} ${base} || true`,
+    enginePass,
+    enginePass,
+  ].join("; ");
 }
 
 interface ProcessFailure {

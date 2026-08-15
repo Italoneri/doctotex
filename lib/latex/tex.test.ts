@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Paragraph } from "@/lib/extract/body";
 import type { StyleProfile } from "@/lib/extract/types";
+import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
 import { generateDocument } from "./tex";
 
 const PROFILE: StyleProfile = {
@@ -39,8 +40,11 @@ function run(text: string, bold = false, italic = false) {
   return { text, bold, italic };
 }
 
-function render(paragraphs: readonly Paragraph[]): string {
-  return generateDocument(PROFILE, paragraphs);
+function render(
+  paragraphs: readonly Paragraph[],
+  options: GenerationOptions = DEFAULT_OPTIONS,
+): string {
+  return generateDocument({ profile: PROFILE, paragraphs, options });
 }
 
 describe("document shell", () => {
@@ -50,6 +54,67 @@ describe("document shell", () => {
     expect(tex).toContain("\\documentclass{doctotex}");
     expect(tex).toContain("\\begin{document}");
     expect(tex).toContain("\\end{document}");
+  });
+});
+
+describe("the single-file layout", () => {
+  const single = { ...DEFAULT_OPTIONS, layout: "single" } as const;
+
+  // There is no class to load, so everything it would have carried has to be
+  // in the preamble instead.
+  it("inlines the preamble under a stock class", () => {
+    const tex = render([], single);
+
+    expect(tex).toContain("\\documentclass{article}");
+    expect(tex).not.toContain("\\documentclass{doctotex}");
+    expect(tex).toContain("\\geometry{");
+    expect(tex).toContain("\\newcommand{\\doctotextitle}");
+  });
+
+  it("spells package loading the way a preamble spells it", () => {
+    const tex = render([], single);
+
+    expect(tex).toContain("\\usepackage{geometry}");
+    expect(tex).not.toContain("\\RequirePackage");
+  });
+
+  it("still renders the body through the same commands", () => {
+    const tex = render([{ styleId: "Titre1", runs: [run("Intro")] }], single);
+
+    expect(tex).toContain("\\section*{Intro}");
+  });
+});
+
+describe("bibliography", () => {
+  it("prints nothing when none is asked for", () => {
+    const tex = render([]);
+
+    expect(tex).not.toContain("\\printbibliography");
+    expect(tex).not.toContain("\\bibliography{");
+  });
+
+  it("prints a biblatex list", () => {
+    const tex = render([], {
+      ...DEFAULT_OPTIONS,
+      bibliography: { backend: "biblatex", style: "apa" },
+    });
+
+    expect(tex).toContain("\\printbibliography");
+  });
+
+  // \bibliographystyle writes to the .aux file, which is not open until the
+  // document body has begun.
+  it("names the .bst inside the document rather than the preamble", () => {
+    const tex = render([], {
+      ...DEFAULT_OPTIONS,
+      bibliography: { backend: "natbib", style: "ieee" },
+    });
+
+    const begin = tex.indexOf("\\begin{document}");
+    expect(tex.indexOf("\\bibliographystyle{IEEEtranN}")).toBeGreaterThan(
+      begin,
+    );
+    expect(tex).toContain("\\bibliography{references}");
   });
 });
 
