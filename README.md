@@ -18,7 +18,9 @@ browser before download.
 `doctotex.cls` and a `main.tex`, editable in the browser, compiled to a PDF shown
 beside the code, and downloadable as a zip. Four settings change what is
 generated; each one re-runs the conversion over the file the browser already
-holds. Tables, images and equations are not carried across yet.
+holds. Lists, tables, images and equations are not carried across yet — a
+bulleted paragraph arrives as an ordinary one, and the `lists` chip in the report
+says the document has them, not that the template keeps them.
 
 | Setting        | Choices                            | What changes                                                          |
 | -------------- | ---------------------------------- | --------------------------------------------------------------------- |
@@ -32,7 +34,9 @@ over the text currently in the editor and answers with the PDF itself, so what
 you look at and what you download come out of the same engine. The engine
 travels with the request rather than being inferred from the sources — a
 `fontspec` preamble read by pdfLaTeX fails in a way that looks like the reader's
-mistake. Editing debounces, and one compile runs at a time.
+mistake. Editing debounces and the editor keeps one compile in flight, but a
+debounce is a courtesy from the client: the endpoint caps itself at two
+containers and answers a third with 429.
 
 `main.tex` carries the commands that build it, because the engine is chosen in a
 browser and the archive is opened somewhere else. Reaching for pdfLaTeX out of
@@ -45,8 +49,9 @@ about: `lib/latex/compile.test.ts` compiles in the texlive container and fails o
 a non-zero exit. By default it runs one case per option — each of the three
 engines, each of the seven bibliography settings, both layouts — plus the five
 crossings that can plausibly fail together, all of them fontspec beside a
-bibliography, since both rewrite the preamble the inter-pass tools read. Sixteen
-compiles instead of forty-two.
+bibliography, since both rewrite the preamble the inter-pass tools read. The
+defaults belong to all three option groups, so the set is deduplicated before it
+runs: fifteen compiles instead of forty-two.
 
 ```bash
 DOCTOTEX_MATRIX=full npm run test   # the whole cross product, 42 compiles
@@ -90,7 +95,8 @@ app/
   api/convert/route.ts     docx -> StyleProfile + sources   (nodejs runtime)
   api/preview/route.ts     sources -> PDF                   (nodejs runtime)
   api/bundle/route.ts      sources -> ZIP                   (nodejs runtime)
-components/                Dropzone, ConfigPanel, ArchiveReport, LatexEditor, PreviewPane
+components/                Dropzone, ConfigPanel, ArchiveReport, StyleProfileReport,
+                           PageDiagram, SourcesPanel, LatexEditor, PreviewPane
 lib/
   docx/                    unzip, part reading, XML parsing
   editor/                  Monaco's LaTeX grammar

@@ -240,7 +240,20 @@ function matrix(): readonly GenerationOptions[] {
     },
   ];
 
-  return [...perOption, ...crossings];
+  return distinct([...perOption, ...crossings]);
+}
+
+/**
+ * The defaults belong to all three option groups, so covering each option once
+ * names pdfLaTeX with no bibliography and a separate class three times. Each
+ * repeat is a container start that proves what the first already proved.
+ *
+ * `label` reads every field, which is what makes it usable as the identity.
+ */
+function distinct(
+  options: readonly GenerationOptions[],
+): readonly GenerationOptions[] {
+  return [...new Map(options.map((o) => [label(o), o])).values()];
 }
 
 function label({ engine, bibliography, layout }: GenerationOptions): string {
