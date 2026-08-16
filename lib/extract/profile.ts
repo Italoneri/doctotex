@@ -1,5 +1,6 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
+import { extractParagraphs, type Paragraph } from "./body";
 import { extractPage } from "./page";
 import { extractTheme } from "./theme";
 import {
@@ -19,9 +20,21 @@ const THEME_PATTERN = /^word\/theme\/theme\d*\.xml$/;
 /** Word's built-in style ID for body text, before any localisation. */
 const NORMAL_STYLE_ID = "Normal";
 
-export async function extractStyleProfile(
+/** What one `.docx` yields: how it looks, and what it says. */
+export interface ExtractedDocument {
+  readonly profile: StyleProfile;
+  readonly paragraphs: readonly Paragraph[];
+}
+
+/**
+ * The two halves are extracted together because the second needs the first: a
+ * paragraph's own formatting is the last level of the same cascade the
+ * stylesheet begins, so resolving it needs the stylesheet in hand. Reading the
+ * parts separately also decompressed the largest one twice.
+ */
+export async function extractDocument(
   archive: DocxArchive,
-): Promise<StyleProfile> {
+): Promise<ExtractedDocument> {
   const documentXml = await readTextPart(archive, MAIN_DOCUMENT);
   if (!documentXml) {
     throw new DocxFormatError(`${MAIN_DOCUMENT} could not be read.`);
@@ -31,14 +44,17 @@ export async function extractStyleProfile(
   const sheet = parseStyleSheet(await readTextPart(archive, STYLES), theme);
 
   return {
-    page: extractPage(documentXml),
-    // Body text is the Normal style resolved against docDefaults, which is what
-    // an unstyled paragraph actually renders as.
-    defaults: resolveStyle(sheet, normalStyleId(sheet)),
-    headings: findHeadingStyles(sheet),
-    title: findTitleStyle(sheet),
-    theme,
-    features: detectFeatures(archive, documentXml),
+    profile: {
+      page: extractPage(documentXml),
+      // Body text is the Normal style resolved against docDefaults, which is
+      // what an unstyled paragraph actually renders as.
+      defaults: resolveStyle(sheet, normalStyleId(sheet)),
+      headings: findHeadingStyles(sheet),
+      title: findTitleStyle(sheet),
+      theme,
+      features: detectFeatures(archive, documentXml),
+    },
+    paragraphs: extractParagraphs(documentXml, sheet),
   };
 }
 

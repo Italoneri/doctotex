@@ -1,7 +1,7 @@
-import { DocxFormatError, openDocx, readTextPart } from "@/lib/docx/archive";
+import { DocxFormatError, openDocx } from "@/lib/docx/archive";
 import { describeRejection, rejectUpload } from "@/lib/docx/upload";
-import { countStyleUsage, extractParagraphs } from "@/lib/extract/body";
-import { extractStyleProfile } from "@/lib/extract/profile";
+import { countStyleUsage } from "@/lib/extract/body";
+import { extractDocument } from "@/lib/extract/profile";
 import type { StyleProfile } from "@/lib/extract/types";
 import { generateSources } from "@/lib/latex/bundle";
 import {
@@ -67,10 +67,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const archive = await openDocx(new Uint8Array(await file.arrayBuffer()));
-    const profile = await extractStyleProfile(archive);
-    const documentXml =
-      (await readTextPart(archive, "word/document.xml")) ?? "";
-    const paragraphs = extractParagraphs(documentXml);
+    const { profile, paragraphs } = await extractDocument(archive);
 
     return Response.json({
       ok: true,

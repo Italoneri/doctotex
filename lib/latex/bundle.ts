@@ -26,6 +26,7 @@ export function generateSources(input: GenerateInput): SourceFiles {
   const options = input.options ?? DEFAULT_OPTIONS;
   const shared = {
     profile: input.profile,
+    paragraphs: input.paragraphs,
     headerFooter: input.headerFooter,
     usage: countStyleUsage(input.paragraphs),
     options,
@@ -38,10 +39,7 @@ export function generateSources(input: GenerateInput): SourceFiles {
   if (options.layout === "multi") {
     sources.set(CLASS_FILE, generateClass(shared));
   }
-  sources.set(
-    MAIN_FILE,
-    generateDocument({ ...shared, paragraphs: input.paragraphs }),
-  );
+  sources.set(MAIN_FILE, generateDocument(shared));
 
   // A `\bibliography` pointing at a file that is not in the archive is a
   // compile error on the reader's machine, not a missing extra.

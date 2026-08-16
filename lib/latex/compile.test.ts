@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
-import { openDocx, readTextPart } from "@/lib/docx/archive";
-import { extractParagraphs, type Paragraph } from "@/lib/extract/body";
-import { extractStyleProfile } from "@/lib/extract/profile";
+import { openDocx } from "@/lib/docx/archive";
+import type { Paragraph } from "@/lib/extract/body";
+import { extractDocument } from "@/lib/extract/profile";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE } from "./bib";
 import { CLASS_FILE, generateSources, type SourceFiles } from "./bundle";
@@ -32,12 +32,8 @@ const MATRIX_TIMEOUT = { timeout: 600_000 };
 
 async function sourcesFromFixture(): Promise<SourceFiles> {
   const archive = await openDocx(await readFixture(FIXTURE));
-  const documentXml = (await readTextPart(archive, "word/document.xml")) ?? "";
 
-  return generateSources({
-    profile: await extractStyleProfile(archive),
-    paragraphs: extractParagraphs(documentXml),
-  });
+  return generateSources(await extractDocument(archive));
 }
 
 describeCompiling("generated sources", () => {
@@ -116,22 +112,52 @@ const PROFILE: StyleProfile = {
   },
 };
 
+/**
+ * The body carries one of every construct the generator can emit, because the
+ * only thing that settles whether `\uline` inside `\textcolor` inside a shaped
+ * paragraph is valid LaTeX is TeX.
+ */
 const PARAGRAPHS: readonly Paragraph[] = [
-  { styleId: "Title", runs: [text("A Generated Template")] },
-  { styleId: "Heading1", runs: [text("Introduction")] },
+  { styleId: "Title", style: {}, runs: [text("A Generated Template")] },
+  { styleId: "Heading1", style: {}, runs: [text("Introduction")] },
   {
+    style: {},
     runs: [
       text("Body text with "),
-      { text: "bold", bold: true, italic: false },
+      { text: "bold", style: { bold: true } },
       text(" and reserved characters: 50% of A&B costs $3_00 #1 {x} ~y ^z."),
     ],
   },
-  { styleId: "Heading2", runs: [text("Method")] },
-  { runs: [text("A second paragraph, to give the page something to break.")] },
+  {
+    style: { alignment: "center", spaceBeforePt: 12, spaceAfterPt: 6 },
+    runs: [
+      {
+        text: "Centred, coloured, underlined",
+        style: { colorHex: "#2E74B5", underline: true, fontSizePt: 14 },
+      },
+    ],
+  },
+  {
+    style: { alignment: "justify", indentLeftMm: 10, indentFirstLineMm: 5 },
+    runs: [
+      { text: "Struck through", style: { strike: true } },
+      text(", small caps "),
+      { text: "here", style: { smallCaps: true } },
+      text(", a footnote mark"),
+      { text: "1", style: { script: "superscript" } },
+      text(", and a line break."),
+      { text: "\nAfter the break, in Arial.", style: { fontFamily: "Arial" } },
+    ],
+  },
+  { styleId: "Heading2", style: {}, runs: [text("Method")] },
+  {
+    style: { pageBreakBefore: true },
+    runs: [text("A second paragraph, on a page of its own.")],
+  },
 ];
 
 function text(value: string): Paragraph["runs"][number] {
-  return { text: value, bold: false, italic: false };
+  return { text: value, style: {} };
 }
 
 function sourcesFor(overrides: Partial<GenerationOptions>): {

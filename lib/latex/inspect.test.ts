@@ -1,9 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { describe, it } from "vitest";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
-import { openDocx, readTextPart } from "@/lib/docx/archive";
-import { extractParagraphs } from "@/lib/extract/body";
-import { extractStyleProfile } from "@/lib/extract/profile";
+import { openDocx } from "@/lib/docx/archive";
+import { extractDocument } from "@/lib/extract/profile";
 import { generateSources } from "./bundle";
 import { compile } from "./compile";
 import { MAIN_FILE } from "./tex";
@@ -24,12 +23,7 @@ describe.skipIf(!enabled)("inspect", () => {
     { timeout: 300_000 },
     async () => {
       const archive = await openDocx(await readFixture(FIXTURE));
-      const documentXml =
-        (await readTextPart(archive, "word/document.xml")) ?? "";
-      const sources = generateSources({
-        profile: await extractStyleProfile(archive),
-        paragraphs: extractParagraphs(documentXml),
-      });
+      const sources = generateSources(await extractDocument(archive));
 
       await mkdir(OUT, { recursive: true });
       for (const [name, content] of sources) {

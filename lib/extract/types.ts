@@ -19,6 +19,13 @@ export interface PageGeometry {
 }
 
 /**
+ * `baseline` is kept rather than folded into `undefined`: a run that resets to
+ * the baseline has to override a style that raised it, and an absent property
+ * inherits instead.
+ */
+export type VerticalAlign = "baseline" | "superscript" | "subscript";
+
+/**
  * Every field is optional because a style declares only what it overrides; the
  * cascade in styles.ts merges the chain before anything is consumed.
  */
@@ -27,7 +34,11 @@ export interface TextStyle {
   readonly fontSizePt?: number;
   readonly bold?: boolean;
   readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly strike?: boolean;
   readonly allCaps?: boolean;
+  readonly smallCaps?: boolean;
+  readonly script?: VerticalAlign;
   readonly colorHex?: string;
 }
 

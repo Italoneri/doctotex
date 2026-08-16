@@ -77,6 +77,35 @@ Equation 3.0 object with a `.wmf` fallback in `word/media/image3.wmf`. The
 phase-5 OMML walker will not see it. Recovering LaTeX from the OLE binary is out
 of scope; the realistic fallback is embedding the `.wmf` as an image.
 
+## `curriculo-estagio.docx`
+
+A Portuguese-locale one-page CV exported from Google Docs. A4, no `w:pStyle`
+anywhere, everything formatted directly.
+
+### What it taught us
+
+**Direct formatting is the normal case, not the exception.** Not one of its
+paragraphs references a style, yet it centres, colours, sizes and spaces almost
+every one of them through its own `w:pPr` and `w:rPr`. A converter that reads
+only the stylesheet reproduces none of it. This is the document the direct
+formatting cascade was built against.
+
+**Google Docs writes `w:ptab`, not `w:tab`.** Its right-aligned dates use
+`<w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/>`, an
+absolute position tab that carries its own alignment and needs no `w:tabs`
+lookup at all. `w:relativeTo="margin"` with `w:alignment="right"` is exactly
+`\hfill`. A tab-stop implementation that reads only `w:tabs` and
+`w:defaultTabStop` will not see this document's tabs.
+
+**Its rules are bottom borders on the heading paragraph.** Each section title
+carries `<w:pBdr><w:bottom w:val="single" w:color="1F3A5F" w:sz="8"
+w:space="2"/></w:pBdr>`. Note `w:sz="8"` is **eighths of a point** — 1pt — not
+the half-points `w:sz` means inside `w:rPr`. The same attribute name means two
+different units depending on where it sits.
+
+**It sets `w:hAnsi` beside `w:ascii` on every run**, and other Google Docs
+exports set only `w:hAnsi`, so reading `w:ascii` alone reports no font.
+
 ## Gaps
 
 No fixture covers these yet, so the matching phase cannot be fully verified:
