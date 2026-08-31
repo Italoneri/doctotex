@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { countStyleUsage, type Paragraph } from "@/lib/extract/body";
+import type { ConversionReport } from "@/lib/extract/report";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE, bibliographyStub } from "./bib";
 import { CLASS_NAME, generateClass, type HeaderFooterText } from "./cls";
@@ -20,6 +21,8 @@ export interface GenerateInput {
   readonly paragraphs: readonly Paragraph[];
   readonly headerFooter?: HeaderFooterText;
   readonly options?: GenerationOptions;
+  /** What the extraction had to change, written into the generated document. */
+  readonly report?: ConversionReport;
 }
 
 export function generateSources(input: GenerateInput): SourceFiles {
@@ -30,6 +33,7 @@ export function generateSources(input: GenerateInput): SourceFiles {
     headerFooter: input.headerFooter,
     usage: countStyleUsage(input.paragraphs),
     options,
+    report: input.report,
   };
 
   const sources = new Map<string, string>();

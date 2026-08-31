@@ -2,6 +2,7 @@ import { DocxFormatError, openDocx } from "@/lib/docx/archive";
 import { describeRejection, rejectUpload } from "@/lib/docx/upload";
 import { countStyleUsage } from "@/lib/extract/body";
 import { extractDocument } from "@/lib/extract/profile";
+import type { ConversionReport } from "@/lib/extract/report";
 import type { StyleProfile } from "@/lib/extract/types";
 import { generateSources } from "@/lib/latex/bundle";
 import {
@@ -31,6 +32,12 @@ export interface ConvertSuccess {
    * claim a structure the document does not have.
    */
   readonly styleUsage: Readonly<Record<string, number>>;
+  /**
+   * What the conversion changed rather than reproduced, with the reason. A
+   * degradation the reader is not told about is one they find by comparing the
+   * PDF against the original, which is the work this tool exists to save.
+   */
+  readonly report: ConversionReport;
   /**
    * Echoed back so the preview compiles with the engine the sources were
    * written for. A client that guesses would run pdfLaTeX over a fontspec
@@ -67,7 +74,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const archive = await openDocx(new Uint8Array(await file.arrayBuffer()));
-    const { profile, paragraphs } = await extractDocument(archive);
+    const { profile, paragraphs, report } = await extractDocument(archive);
 
     return Response.json({
       ok: true,
@@ -76,9 +83,10 @@ export async function POST(request: Request): Promise<Response> {
       entries: archive.entries,
       profile,
       sources: Object.fromEntries(
-        generateSources({ profile, paragraphs, options }),
+        generateSources({ profile, paragraphs, options, report }),
       ),
       styleUsage: Object.fromEntries(countStyleUsage(paragraphs)),
+      report,
       options,
     } satisfies ConvertSuccess);
   } catch (error) {

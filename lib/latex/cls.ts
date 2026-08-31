@@ -1,11 +1,20 @@
 import { bibliographySetup } from "./bib";
 import {
+  fontSize,
+  mm,
+  prefixed,
+  pt,
+  trim,
+  TEX_LEADING_RATIO,
+} from "./format";
+import {
   FONTSPEC_SETTER,
   isSubstitution,
   mapFont,
   type FontMapping,
   type LatexFamily,
 } from "./fonts";
+import { listPreamble } from "./list";
 import {
   DEFAULT_OPTIONS,
   usesFontspec,
@@ -32,9 +41,6 @@ const DEFAULT_BODY_SIZE_PT = 10;
 
 /** LaTeX's own default; set explicitly so fancyhdr stops warning about it. */
 const HEAD_HEIGHT_MM = 4.94;
-
-/** TeX sets its baselines this many times the type size apart. */
-const TEX_LEADING_RATIO = 1.2;
 
 /** geometry rejects a zero separation, and Word can legitimately ask for one. */
 const MIN_SEPARATION_MM = 0.1;
@@ -85,6 +91,7 @@ interface Needs {
   readonly strikeOrUnderline: boolean;
   readonly justifiedParagraphs: boolean;
   readonly shapedParagraphs: boolean;
+  readonly lists: boolean;
 }
 
 function needsOf(
@@ -103,6 +110,9 @@ function needsOf(
       bodyAlignment !== "justify" &&
       paragraphs.some((p) => p.style.alignment === "justify"),
     shapedParagraphs: paragraphs.some((p) => isShaped(p, profile)),
+    // Driven by what the paragraphs resolved to, not by the presence of
+    // numbering.xml: Word ships that part in documents that have no list.
+    lists: paragraphs.some((p) => p.list !== undefined),
   };
 }
 
@@ -158,6 +168,7 @@ export function preambleLines(input: ClassInput): readonly string[] {
   return [
     ...fontSetup(profile, paragraphs, bodySizePt, options.engine),
     ...prefixed(inlineDecorations(needs)),
+    ...prefixed(needs.lists ? listPreamble() : []),
     "",
     ...geometry(profile),
     "",
@@ -658,27 +669,6 @@ function pageStyle(headerFooter: HeaderFooterText): readonly string[] {
   return lines;
 }
 
-/** A blank line before a section, but no blank line where there is no section. */
-export function prefixed(lines: readonly string[]): readonly string[] {
-  return lines.length === 0 ? [] : ["", ...lines];
-}
-
-export function fontSize(sizePt: number): string {
-  return `\\fontsize{${trim(sizePt)}pt}{${trim(sizePt * TEX_LEADING_RATIO)}pt}\\selectfont`;
-}
-
 function separation(valueMm: number): number {
   return Math.max(MIN_SEPARATION_MM, valueMm);
-}
-
-export function mm(value: number): string {
-  return `${trim(value)}mm`;
-}
-
-export function pt(value: number): string {
-  return `${trim(value)}pt`;
-}
-
-function trim(value: number): string {
-  return String(Math.round(value * 100) / 100);
 }

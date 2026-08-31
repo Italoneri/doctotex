@@ -4,20 +4,25 @@ import {
   type Paragraph,
   type TextRun,
 } from "@/lib/extract/body";
+import type { ListMarker } from "@/lib/extract/numbering";
+import { EMPTY_REPORT, type ConversionReport } from "@/lib/extract/report";
 import type { Alignment, StyleProfile, TextStyle } from "@/lib/extract/types";
 import { bibliographySetup } from "./bib";
 import {
+  environmentFor,
+  optionsFor,
+  type ListShape,
+  type ListStack,
+} from "./list";
+import {
   BANNER,
   CLASS_NAME,
-  fontSize,
   isShaped,
-  mm,
   preambleLines,
-  prefixed,
-  pt,
   type ClassInput,
 } from "./cls";
 import { escapeLatex } from "./escape";
+import { fontSize, mm, prefixed, pt } from "./format";
 import { mapFont } from "./fonts";
 import {
   bibToolFor,
@@ -41,6 +46,7 @@ const SECTIONING = [
 
 export interface DocumentInput extends ClassInput {
   readonly paragraphs: readonly Paragraph[];
+  readonly report?: ConversionReport;
 }
 
 export function generateDocument(input: DocumentInput): string {
@@ -52,11 +58,11 @@ export function generateDocument(input: DocumentInput): string {
     ...opening(input, options),
     "",
     "\\begin{document}",
-    ...prefixed(unsupported(input.profile)),
+    ...prefixed(
+      conversionNotes(input.profile, input.report ?? EMPTY_REPORT),
+    ),
     "",
-    ...input.paragraphs
-      .map((paragraph) => render(paragraph, context))
-      .filter(Boolean),
+    ...renderBody(input.paragraphs, context),
     ...(bibliography.body.length === 0 ? [] : ["", ...bibliography.body]),
     "",
     "\\end{document}",
@@ -65,19 +71,29 @@ export function generateDocument(input: DocumentInput): string {
 }
 
 /**
- * What the document carries that this template does not yet reproduce.
+ * What the document carries that this template does not reproduce.
  *
  * Said here rather than nowhere: a table whose text is simply missing from the
  * output is indistinguishable from a document that never had one, and someone
  * reading the PDF has no way to find out which it was.
+ *
+ * Two kinds of loss, because they are not the same news. A feature this build
+ * does not carry at all is absent from the document; a degradation is something
+ * that did come across, in a form that is not quite what Word drew.
  */
-function unsupported(profile: StyleProfile): readonly string[] {
+function conversionNotes(
+  profile: StyleProfile,
+  report: ConversionReport,
+): readonly string[] {
+  return [...missingFeatures(profile), ...degraded(report)];
+}
+
+function missingFeatures(profile: StyleProfile): readonly string[] {
   const missing = [
     profile.features.tables && "tables",
     profile.features.images && "images",
     profile.features.ommlEquations && "equations",
     profile.features.oleObjects && "embedded objects",
-    profile.features.numbering && "numbered or bulleted lists",
   ].filter((entry): entry is string => typeof entry === "string");
 
   if (missing.length === 0) {
@@ -85,10 +101,24 @@ function unsupported(profile: StyleProfile): readonly string[] {
   }
 
   return [
-    `%% TODO: the source document contains ${missing.join(", ")}.`,
+    `%% TODO: the source document contains ${missing.join(" and ")}.`,
     "%% Their text is not carried into this template yet, so what follows is",
     "%% the document's paragraphs alone. Nothing here silently stands in for",
     "%% them — they are absent.",
+  ];
+}
+
+function degraded(report: ConversionReport): readonly string[] {
+  if (report.degradations.length === 0) {
+    return [];
+  }
+
+  return [
+    "%% The conversion changed the following, rather than dropping it:",
+    ...report.degradations.map(
+      ({ detail, count }) =>
+        `%%   ${detail}${count > 1 ? ` (${count} times)` : ""}`,
+    ),
   ];
 }
 
@@ -197,6 +227,135 @@ function contextOf(profile: StyleProfile): Context {
   return { profile, roles, baselines };
 }
 
+/**
+ * The document body, with consecutive list items gathered into environments.
+ *
+ * A list is not a property of a paragraph in OOXML — every item is an ordinary
+ * paragraph that happens to name the same `w:numId`, and the environment exists
+ * only in the gaps between them. Finding those gaps needs the whole sequence,
+ * which is why this is a fold rather than a map.
+ */
+function renderBody(
+  paragraphs: readonly Paragraph[],
+  context: Context,
+): readonly string[] {
+  const lines: string[] = [];
+  const stack: ListMarker[] = [];
+  // Which lists have already been closed once, so a list picked up after an
+  // interruption continues its numbering instead of starting again.
+  const interrupted = new Set<string>();
+
+  const closeTo = (depth: number): void => {
+    while (stack.length > depth) {
+      const closing = stack.pop();
+      if (closing) {
+        interrupted.add(keyOf(closing));
+        lines.push(`\\end{${environmentFor(closing)}}`);
+      }
+    }
+  };
+
+  for (const paragraph of paragraphs) {
+    const marker = paragraph.list;
+
+    if (!marker) {
+      closeTo(0);
+      const rendered = render(paragraph, context);
+      if (rendered !== "") {
+        lines.push(rendered);
+      }
+      continue;
+    }
+
+    // A different `w:numId` is a different list even at the same level, and
+    // nesting one inside the other would make it inherit the wrong counter.
+    if (stack.length > 0 && stack[0]?.numId !== marker.numId) {
+      closeTo(0);
+    }
+    closeTo(depthFor(stack, marker.level));
+
+    for (const opening of openingsFor(stack, marker)) {
+      lines.push(
+        `\\begin{${environmentFor(opening)}}${optionsFor(opening, stack, shapeFor(paragraph, opening, interrupted))}`,
+      );
+      stack.push(opening);
+    }
+
+    lines.push(`\\item ${itemBodyOf(paragraph, context)}`);
+  }
+
+  closeTo(0);
+  return lines;
+}
+
+/** How many levels may stay open for an item at `level`. */
+function depthFor(stack: ListStack, level: number): number {
+  return stack.filter((open) => open.level <= level).length;
+}
+
+/**
+ * The environments to open to reach the item's level.
+ *
+ * Word lets a document start at level 2 with nothing above it, and LaTeX has no
+ * way to open the third nesting level without the two around it, so the
+ * enclosing definitions the marker carries are opened first.
+ */
+function openingsFor(
+  stack: ListStack,
+  marker: ListMarker,
+): readonly ListMarker[] {
+  const openings: ListMarker[] = [];
+
+  for (let level = stack.length; level <= marker.level; level += 1) {
+    const definition =
+      level === marker.level ? marker.definition : marker.ancestors[level];
+    if (!definition) {
+      continue;
+    }
+    openings.push({
+      numId: marker.numId,
+      level,
+      definition,
+      ancestors: marker.ancestors.slice(0, level),
+    });
+  }
+
+  return openings;
+}
+
+/**
+ * `resume` belongs to the outermost level only. An inner list is opened afresh
+ * every time its parent item changes, which is what makes `a, b, c` restart
+ * under each numbered step rather than running on through the document.
+ */
+function shapeFor(
+  paragraph: Paragraph,
+  opening: ListMarker,
+  interrupted: ReadonlySet<string>,
+): ListShape {
+  return {
+    resume:
+      opening.level === 0 &&
+      environmentFor(opening) === "enumerate" &&
+      interrupted.has(keyOf(opening)),
+    spaceBeforePt: paragraph.style.spaceBeforePt,
+    spaceAfterPt: paragraph.style.spaceAfterPt,
+  };
+}
+
+function keyOf(marker: ListMarker): string {
+  return `${marker.numId}:${marker.level}`;
+}
+
+/**
+ * A list item takes its indentation and spacing from the environment, so the
+ * paragraph shaping that a body paragraph gets would fight with it.
+ */
+function itemBodyOf(paragraph: Paragraph, context: Context): string {
+  const body = bodyOf(paragraph, context);
+  return body.trim() === "" ? "" : body;
+}
+
 function render(paragraph: Paragraph, context: Context): string {
   const rendered = renderParagraph(paragraph, context);
 
@@ -212,9 +371,7 @@ function renderParagraph(paragraph: Paragraph, context: Context): string {
   const role = paragraph.styleId
     ? context.roles.get(paragraph.styleId)
     : undefined;
-  const body = dropTrailingBreak(
-    renderRuns(paragraph.runs, baselineFor(paragraph, context)),
-  );
+  const body = bodyOf(paragraph, context);
 
   // An empty heading would produce a bare rule with nothing under it; an empty
   // body paragraph is a deliberate blank line and survives.
@@ -236,6 +393,13 @@ function renderParagraph(paragraph: Paragraph, context: Context): string {
   }
 
   return shape(paragraph, body, context);
+}
+
+/** The paragraph's runs as LaTeX, with nothing said about where they sit. */
+function bodyOf(paragraph: Paragraph, context: Context): string {
+  return dropTrailingBreak(
+    renderRuns(paragraph.runs, baselineFor(paragraph, context)),
+  );
 }
 
 /** The text style the class already applies to a paragraph of this style. */

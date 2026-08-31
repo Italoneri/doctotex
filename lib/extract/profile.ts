@@ -1,7 +1,9 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
 import { extractParagraphs, type Paragraph } from "./body";
+import { parseNumbering } from "./numbering";
 import { extractPage } from "./page";
+import { collectDegradations, type ConversionReport } from "./report";
 import { extractTheme } from "./theme";
 import {
   findHeadingStyles,
@@ -13,6 +15,7 @@ import type { DocumentFeatures, StyleProfile } from "./types";
 
 const MAIN_DOCUMENT = "word/document.xml";
 const STYLES = "word/styles.xml";
+const NUMBERING = "word/numbering.xml";
 
 /** Word numbers theme parts, and a few generators emit `theme.xml` unnumbered. */
 const THEME_PATTERN = /^word\/theme\/theme\d*\.xml$/;
@@ -20,10 +23,11 @@ const THEME_PATTERN = /^word\/theme\/theme\d*\.xml$/;
 /** Word's built-in style ID for body text, before any localisation. */
 const NORMAL_STYLE_ID = "Normal";
 
-/** What one `.docx` yields: how it looks, and what it says. */
+/** What one `.docx` yields: how it looks, what it says, and what was lost. */
 export interface ExtractedDocument {
   readonly profile: StyleProfile;
   readonly paragraphs: readonly Paragraph[];
+  readonly report: ConversionReport;
 }
 
 /**
@@ -40,8 +44,19 @@ export async function extractDocument(
     throw new DocxFormatError(`${MAIN_DOCUMENT} could not be read.`);
   }
 
+  const degradations = collectDegradations();
   const theme = extractTheme(await readThemePart(archive));
   const sheet = parseStyleSheet(await readTextPart(archive, STYLES), theme);
+  const numbering = parseNumbering(
+    await readTextPart(archive, NUMBERING),
+    degradations,
+  );
+
+  const paragraphs = extractParagraphs(documentXml, {
+    sheet,
+    numbering,
+    degradations,
+  });
 
   return {
     profile: {
@@ -54,7 +69,9 @@ export async function extractDocument(
       theme,
       features: detectFeatures(archive, documentXml),
     },
-    paragraphs: extractParagraphs(documentXml, sheet),
+    paragraphs,
+    // Read after the walk: the collector is filled by it.
+    report: degradations.report(),
   };
 }
 

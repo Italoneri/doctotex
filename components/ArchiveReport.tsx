@@ -59,6 +59,7 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
       <StyleProfileReport
         profile={result.profile}
         styleUsage={result.styleUsage}
+        report={result.report}
       />
 
       <div className="grid gap-8 xl:grid-cols-2">

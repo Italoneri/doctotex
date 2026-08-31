@@ -1,3 +1,4 @@
+import type { ConversionReport } from "@/lib/extract/report";
 import type {
   EffectiveStyle,
   HeadingStyle,
@@ -10,11 +11,14 @@ interface StyleProfileReportProps {
   readonly profile: StyleProfile;
   /** Paragraph count per style id, to tell declared apart from applied. */
   readonly styleUsage: Readonly<Record<string, number>>;
+  /** What the conversion changed rather than reproduced, and why. */
+  readonly report: ConversionReport;
 }
 
 export function StyleProfileReport({
   profile,
   styleUsage,
+  report,
 }: StyleProfileReportProps) {
   const appliedHeadings = profile.headings.filter(
     (heading) => (styleUsage[heading.styleId] ?? 0) > 0,
@@ -92,7 +96,46 @@ export function StyleProfileReport({
       </Section>
 
       <FeatureSection profile={profile} />
+
+      <DegradationSection report={report} />
     </div>
+  );
+}
+
+/**
+ * What came across in a different form from the one Word drew.
+ *
+ * Kept apart from "Contains": that section says what the document has, and a
+ * reader checking the PDF against the original needs to know which of those
+ * things they should look at twice.
+ */
+function DegradationSection({
+  report,
+}: {
+  readonly report: ConversionReport;
+}) {
+  if (report.degradations.length === 0) {
+    return null;
+  }
+
+  return (
+    <Section title="Carried across differently">
+      <ul className="space-y-2">
+        {report.degradations.map((degradation) => (
+          <li
+            key={`${degradation.code} ${degradation.detail}`}
+            className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100"
+          >
+            {degradation.detail}
+            {degradation.count > 1 && (
+              <span className="ml-2 text-amber-700 dark:text-amber-300/80">
+                &times;{degradation.count}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }
 

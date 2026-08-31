@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { countStyleUsage, extractParagraphs, type Paragraph } from "./body";
+import {
+  countStyleUsage,
+  extractParagraphs,
+  type BodyContext,
+  type Paragraph,
+} from "./body";
+import { parseNumbering, type Numbering } from "./numbering";
+import { collectDegradations, type Degradations } from "./report";
 import { parseStyleSheet, type StyleSheet } from "./styles";
 
 const EMPTY_SHEET = parseStyleSheet(undefined, {});
+
+function context(
+  sheet: StyleSheet = EMPTY_SHEET,
+  numbering: Numbering = new Map(),
+  degradations: Degradations = collectDegradations(),
+): BodyContext {
+  return { sheet, numbering, degradations };
+}
 
 function documentXml(body: string): string {
   return `<?xml version="1.0"?>
@@ -24,7 +39,7 @@ function read(
   xml: string,
   sheet: StyleSheet = EMPTY_SHEET,
 ): readonly Paragraph[] {
-  return extractParagraphs(documentXml(xml), sheet);
+  return extractParagraphs(documentXml(xml), context(sheet));
 }
 
 function textOf(xml: string): readonly string[] {
@@ -67,7 +82,7 @@ describe("extractParagraphs", () => {
   });
 
   it("returns nothing when there is no body", () => {
-    expect(extractParagraphs("<nonsense/>", EMPTY_SHEET)).toEqual([]);
+    expect(extractParagraphs("<nonsense/>", context())).toEqual([]);
   });
 });
 
@@ -385,5 +400,94 @@ describe("the cascade", () => {
     );
 
     expect(read(xml, sheet)[0]?.runs[0]?.style.bold).toBeUndefined();
+  });
+});
+
+describe("list membership", () => {
+  const NUMBERING = parseNumbering(
+    `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:abstractNum w:abstractNumId="0">
+        <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+        <w:lvl w:ilvl="1"><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2)"/></w:lvl>
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    </w:numbering>`,
+    collectDegradations(),
+  );
+
+  function listed(xml: string, sheet: StyleSheet = EMPTY_SHEET) {
+    return extractParagraphs(
+      documentXml(xml),
+      context(sheet, NUMBERING, collectDegradations()),
+    );
+  }
+
+  function item(text: string, numId: string, level: number): string {
+    return paragraph(
+      `<w:pPr><w:numPr><w:ilvl w:val="${level}"/><w:numId w:val="${numId}"/></w:numPr></w:pPr>` +
+        `<w:r><w:t>${text}</w:t></w:r>`,
+    );
+  }
+
+  it("attaches the resolved level to a numbered paragraph", () => {
+    expect(listed(item("one", "1", 0))[0]?.list).toMatchObject({
+      numId: "1",
+      level: 0,
+      definition: { format: "decimal", lvlText: "%1." },
+    });
+  });
+
+  it("keeps the nesting level a paragraph declares", () => {
+    const xml = item("one", "1", 0) + item("deeper", "1", 1);
+
+    expect(listed(xml).map((p) => p.list?.level)).toEqual([0, 1]);
+  });
+
+  it("defaults to the first level where w:ilvl is absent", () => {
+    const xml = paragraph(
+      `<w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr>` +
+        `<w:r><w:t>one</w:t></w:r>`,
+    );
+
+    expect(listed(xml)[0]?.list?.level).toBe(0);
+  });
+
+  it("leaves an ordinary paragraph out of any list", () => {
+    expect(
+      listed(paragraph("<w:r><w:t>plain</w:t></w:r>"))[0]?.list,
+    ).toBeUndefined();
+  });
+
+  // Word writes numId 0 to take a paragraph back out of the list it inherited.
+  it("treats numId 0 as leaving the list", () => {
+    expect(listed(item("out", "0", 0))[0]?.list).toBeUndefined();
+  });
+
+  it("reads a list the paragraph inherits from its style", () => {
+    const sheet = parseStyleSheet(
+      stylesXml(
+        `<w:style w:styleId="ListPara"><w:name w:val="list paragraph"/>` +
+          `<w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="1"/></w:numPr></w:pPr>` +
+          `</w:style>`,
+      ),
+      {},
+    );
+    const xml = paragraph(
+      `<w:pPr><w:pStyle w:val="ListPara"/></w:pPr><w:r><w:t>inherited</w:t></w:r>`,
+    );
+
+    expect(listed(xml, sheet)[0]?.list).toMatchObject({ numId: "1", level: 1 });
+  });
+
+  it("reports a paragraph pointing at a list the document never defined", () => {
+    const degradations = collectDegradations();
+    extractParagraphs(
+      documentXml(item("orphan", "42", 0)),
+      context(EMPTY_SHEET, NUMBERING, degradations),
+    );
+
+    expect(degradations.report().degradations[0]).toMatchObject({
+      code: "unresolved-list",
+    });
   });
 });

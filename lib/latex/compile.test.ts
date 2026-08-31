@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listsNested } from "@/fixtures/documents";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
 import { openDocx } from "@/lib/docx/archive";
 import type { Paragraph } from "@/lib/extract/body";
@@ -12,6 +13,7 @@ import {
   DEFAULT_OPTIONS,
   ENGINES,
   type Bibliography,
+  type Engine,
   type GenerationOptions,
   type Layout,
 } from "./options";
@@ -356,4 +358,104 @@ function describe_(result: CompileResult): string {
   return result.kind === "unavailable"
     ? result.reason
     : result.log.slice(-5000);
+}
+
+/**
+ * Documents built rather than uploaded, one per feature.
+ *
+ * The matrix above proves the options produce valid LaTeX over a profile with
+ * nothing structural in it. These prove the structural readers do — a list, a
+ * table and an image are where a generator emits something that looks like
+ * LaTeX and is not, and only the engine can say which. They build their own
+ * `.docx`, so they run on a checkout that has no fixture on disk.
+ */
+const FEATURE_DOCUMENTS = [["a three-level nested list", listsNested]] as const;
+
+/**
+ * pdfLaTeX and XeLaTeX select fonts by entirely different machinery, which is
+ * what makes them the pair worth running every time. LuaLaTeX joins the full
+ * matrix rather than the default one.
+ */
+const FEATURE_ENGINES: readonly Engine[] = exhaustive
+  ? ENGINES
+  : ["pdflatex", "xelatex"];
+
+async function expectDocumentCompiles(
+  build: () => Promise<Uint8Array>,
+  engine: Engine,
+): Promise<void> {
+  const sources = await sourcesFromDocument(build, engine);
+  const result = await compile(sources, MAIN_FILE, { engine });
+
+  if (result.kind !== "compiled") {
+    throw new Error(`${engine} failed:\n${describe_(result)}`);
+  }
+  expect(result.pdf.length).toBeGreaterThan(1000);
+}
+
+async function sourcesFromDocument(
+  build: () => Promise<Uint8Array>,
+  engine: Engine = "pdflatex",
+): Promise<SourceFiles> {
+  const archive = await openDocx(await build());
+  const extracted = await extractDocument(archive);
+
+  return generateSources({
+    ...extracted,
+    options: { ...DEFAULT_OPTIONS, engine },
+  });
+}
+
+describe.skipIf(!dockerUp)("a document with structure", () => {
+  it.each(
+    FEATURE_DOCUMENTS.flatMap(([name, build]) =>
+      FEATURE_ENGINES.map(
+        (engine) =>
+          [`${name} compiles under ${engine}`, build, engine] as const,
+      ),
+    ),
+  )("%s", MATRIX_TIMEOUT, async (_name, build, engine) => {
+    await expectDocumentCompiles(build, engine);
+  });
+});
+
+// Needs no daemon: what the generator emitted is readable without running it.
+describe("a document with lists", () => {
+  it("nests the levels the document nests", async () => {
+    const sources = await sourcesFromDocument(listsNested);
+    const main = sources.get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("\\begin{enumerate}");
+    expect(main).toContain("\\begin{itemize}");
+    // Three levels open before the deepest item, and all three close again.
+    expect(count(main, "\\begin{enumerate}")).toBe(
+      count(main, "\\end{enumerate}"),
+    );
+    expect(count(main, "\\begin{itemize}")).toBe(count(main, "\\end{itemize}"));
+  });
+
+  it("resumes a list an ordinary paragraph interrupted", async () => {
+    const main = (await sourcesFromDocument(listsNested)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("resume");
+  });
+
+  it("carries the level formats out of numbering.xml", async () => {
+    const main = (await sourcesFromDocument(listsNested)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("label=\\arabic*.");
+    expect(main).toContain("label=\\alph*)");
+    expect(main).toContain("\\roman*");
+  });
+
+  it("loads enumitem in the class only because the document has lists", async () => {
+    const withLists = await sourcesFromDocument(listsNested);
+
+    expect(withLists.get(CLASS_FILE)).toContain("\\RequirePackage{enumitem}");
+    expect(sourcesFor({}).sources.get(CLASS_FILE)).not.toContain("enumitem");
+  });
+});
+
+function count(text: string, needle: string): number {
+  return text.split(needle).length - 1;
 }

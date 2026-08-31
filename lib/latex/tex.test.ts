@@ -409,18 +409,69 @@ describe("paragraph shape", () => {
 });
 
 describe("what the template does not carry", () => {
-  it("says so where the document has tables or lists", () => {
+  it("says so where the document has tables", () => {
     const withTables: StyleProfile = {
       ...PROFILE,
-      features: { ...PROFILE.features, tables: true, numbering: true },
+      features: { ...PROFILE.features, tables: true },
     };
     const tex = generateDocument({ profile: withTables, paragraphs: [] });
 
     expect(tex).toContain("%% TODO: the source document contains tables");
-    expect(tex).toContain("numbered or bulleted lists");
+  });
+
+  // The numbering part is present in Word documents that have no list in them,
+  // and lists are carried now in any case.
+  it("says nothing about lists, which are carried", () => {
+    const withNumbering: StyleProfile = {
+      ...PROFILE,
+      features: { ...PROFILE.features, numbering: true },
+    };
+    const tex = generateDocument({ profile: withNumbering, paragraphs: [] });
+
+    expect(tex).not.toContain("%% TODO: the source document");
   });
 
   it("says nothing where there is nothing to say", () => {
     expect(render([])).not.toContain("%% TODO: the source document");
+  });
+});
+
+describe("what the conversion changed", () => {
+  it("names each degradation and why it happened", () => {
+    const tex = generateDocument({
+      profile: PROFILE,
+      paragraphs: [],
+      report: {
+        degradations: [
+          {
+            code: "custom-list-label",
+            detail: "Bullet character U+F0FC belongs to a symbol font.",
+            count: 3,
+          },
+        ],
+      },
+    });
+
+    expect(tex).toContain("Bullet character U+F0FC belongs to a symbol font.");
+    expect(tex).toContain("(3 times)");
+  });
+
+  it("does not count a degradation that happened once", () => {
+    const tex = generateDocument({
+      profile: PROFILE,
+      paragraphs: [],
+      report: {
+        degradations: [
+          {
+            code: "nested-table",
+            detail: "A table sat inside a cell.",
+            count: 1,
+          },
+        ],
+      },
+    });
+
+    expect(tex).toContain("A table sat inside a cell.");
+    expect(tex).not.toContain("times)");
   });
 });

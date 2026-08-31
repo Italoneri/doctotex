@@ -49,12 +49,20 @@ const VERTICAL_ALIGNS: Readonly<Record<string, VerticalAlign>> = {
   subscript: "subscript",
 };
 
+/** A `w:numPr` declared by a style rather than by the paragraph itself. */
+export interface StyleNumbering {
+  readonly numId?: string;
+  readonly level?: number;
+}
+
 export interface StyleDefinition {
   readonly styleId: string;
   /** Canonical name, lowercased: "heading 1", "title", "body text indent". */
   readonly name: string;
   readonly basedOn?: string;
   readonly style: EffectiveStyle;
+  /** Only what this style declares; the chain is resolved in `StyleSheet`. */
+  readonly numbering?: StyleNumbering;
 }
 
 export interface StyleSheet {
@@ -66,6 +74,14 @@ export interface StyleSheet {
    * everywhere the sheet already goes.
    */
   readonly theme: ThemeFonts;
+  /**
+   * Which list a style puts its paragraphs in, resolved through `basedOn`.
+   *
+   * Word's ribbon writes the list onto the paragraph, but its own numbered
+   * heading styles and many templates declare it on the style instead, and a
+   * reader that looks only at `w:pPr/w:numPr` sees no list at all in those.
+   */
+  readonly numbering: ReadonlyMap<string, StyleNumbering>;
 }
 
 export function parseStyleSheet(
@@ -73,7 +89,12 @@ export function parseStyleSheet(
   theme: ThemeFonts,
 ): StyleSheet {
   if (!stylesXml) {
-    return { docDefaults: EMPTY_STYLE, definitions: new Map(), theme };
+    return {
+      docDefaults: EMPTY_STYLE,
+      definitions: new Map(),
+      theme,
+      numbering: new Map(),
+    };
   }
 
   const root = child(parseXml(stylesXml), "w:styles");
@@ -94,7 +115,51 @@ export function parseStyleSheet(
     },
     definitions,
     theme,
+    numbering: resolveStyleNumbering(definitions),
   };
+}
+
+/**
+ * Each style's list membership, with `basedOn` already followed.
+ *
+ * Resolved once here rather than per paragraph: a body of two thousand list
+ * items would otherwise walk the same chains two thousand times.
+ */
+function resolveStyleNumbering(
+  definitions: ReadonlyMap<string, StyleDefinition>,
+): ReadonlyMap<string, StyleNumbering> {
+  const resolved = new Map<string, StyleNumbering>();
+
+  for (const styleId of definitions.keys()) {
+    const found = inheritedNumbering(definitions, styleId);
+    if (found) {
+      resolved.set(styleId, found);
+    }
+  }
+
+  return resolved;
+}
+
+function inheritedNumbering(
+  definitions: ReadonlyMap<string, StyleDefinition>,
+  styleId: string,
+): StyleNumbering | undefined {
+  const seen = new Set<string>();
+
+  let current: string | undefined = styleId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const definition: StyleDefinition | undefined = definitions.get(current);
+    if (!definition) {
+      return undefined;
+    }
+    if (definition.numbering?.numId !== undefined) {
+      return definition.numbering;
+    }
+    current = definition.basedOn;
+  }
+
+  return undefined;
 }
 
 /**
@@ -208,6 +273,8 @@ function readDefinition(
     return undefined;
   }
 
+  const numPr = child(child(node, "w:pPr"), "w:numPr");
+
   return {
     styleId,
     name: (attribute(child(node, "w:name"), "w:val") ?? "").toLowerCase(),
@@ -215,6 +282,10 @@ function readDefinition(
     style: {
       text: readTextStyle(child(node, "w:rPr"), theme),
       paragraph: readParagraphStyle(child(node, "w:pPr")),
+    },
+    numbering: numPr && {
+      numId: attribute(child(numPr, "w:numId"), "w:val"),
+      level: toInteger(attribute(child(numPr, "w:ilvl"), "w:val")),
     },
   };
 }

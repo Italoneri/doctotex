@@ -8,6 +8,12 @@ import {
   type SequenceNode,
 } from "@/lib/docx/sequence";
 import {
+  resolveMarker,
+  type ListMarker,
+  type Numbering,
+} from "./numbering";
+import type { Degradations } from "./report";
+import {
   readParagraphStyle,
   readTextStyle,
   resolveParagraph,
@@ -15,6 +21,7 @@ import {
   type StyleSheet,
 } from "./styles";
 import type { EffectiveStyle, ParagraphStyle, TextStyle } from "./types";
+import { toInteger } from "./units";
 
 /**
  * Structure XML itself cannot carry, so it can travel inside the text.
@@ -38,6 +45,21 @@ export interface Paragraph {
   /** Fully resolved, including the paragraph's own `w:pPr`. */
   readonly style: ParagraphStyle;
   readonly runs: readonly TextRun[];
+  /** Set where `w:numPr` puts the paragraph in a list, with its level resolved. */
+  readonly list?: ListMarker;
+}
+
+/**
+ * Everything the walk needs that is not the node in front of it.
+ *
+ * Passed as one value rather than three parameters because the walk is
+ * recursive and every reader below it needs the same three; threading them
+ * separately is how a reader ends up quietly missing one.
+ */
+export interface BodyContext {
+  readonly sheet: StyleSheet;
+  readonly numbering: Numbering;
+  readonly degradations: Degradations;
 }
 
 /**
@@ -49,7 +71,7 @@ export interface Paragraph {
  */
 export function extractParagraphs(
   documentXml: string,
-  sheet: StyleSheet,
+  context: BodyContext,
 ): readonly Paragraph[] {
   const body = findDescendant(parseSequence(documentXml), "w:body");
   if (!body) {
@@ -58,7 +80,7 @@ export function extractParagraphs(
 
   return body.children
     .filter((node) => node.name === "w:p")
-    .map((node) => readParagraph(node, sheet));
+    .map((node) => readParagraph(node, context));
 }
 
 /**
@@ -83,13 +105,13 @@ export function countStyleUsage(
   return counts;
 }
 
-function readParagraph(node: SequenceNode, sheet: StyleSheet): Paragraph {
+function readParagraph(node: SequenceNode, context: BodyContext): Paragraph {
   const properties = findChild(node, "w:pPr");
   const styleId = attributeOf(findChild(properties, "w:pStyle"), "w:val");
 
   // `w:pPr/w:rPr` formats the paragraph mark itself, not the runs inside it,
   // so only the paragraph properties are read here; each run carries its own.
-  const effective = resolveParagraph(sheet, styleId, {
+  const effective = resolveParagraph(context.sheet, styleId, {
     text: {},
     paragraph: readParagraphStyle(propertiesOf(properties)),
   });
@@ -97,8 +119,45 @@ function readParagraph(node: SequenceNode, sheet: StyleSheet): Paragraph {
   return {
     styleId,
     style: effective.paragraph,
-    runs: mergeAdjacent(collectRuns(node.children, sheet, effective)),
+    runs: mergeAdjacent(collectRuns(node.children, context.sheet, effective)),
+    list: readListMarker(properties, styleId, context),
   };
+}
+
+/**
+ * A paragraph joins a list through `w:numPr`, either directly or through the
+ * style it points at. Word writes the second form for its own List Paragraph
+ * style, so reading only the direct one misses every list in a Word document
+ * that was made with the ribbon button.
+ */
+function readListMarker(
+  properties: SequenceNode | undefined,
+  styleId: string | undefined,
+  { sheet, numbering, degradations }: BodyContext,
+): ListMarker | undefined {
+  const own = findChild(properties, "w:numPr");
+  const inherited = styleId ? sheet.numbering.get(styleId) : undefined;
+
+  const numId =
+    attributeOf(findChild(own, "w:numId"), "w:val") ?? inherited?.numId;
+  if (numId === undefined || numId === "0") {
+    // Word writes numId 0 to take a paragraph back out of a list.
+    return undefined;
+  }
+
+  const level =
+    toInteger(attributeOf(findChild(own, "w:ilvl"), "w:val")) ??
+    inherited?.level ??
+    0;
+
+  const marker = resolveMarker(numbering, numId, level);
+  if (!marker) {
+    degradations.note(
+      "unresolved-list",
+      `A paragraph asks for list ${numId} at level ${level}, which numbering.xml does not define; it is written as an ordinary paragraph.`,
+    );
+  }
+  return marker;
 }
 
 /**
