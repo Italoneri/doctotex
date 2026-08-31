@@ -109,11 +109,7 @@ export function StyleProfileReport({
  * reader checking the PDF against the original needs to know which of those
  * things they should look at twice.
  */
-function DegradationSection({
-  report,
-}: {
-  readonly report: ConversionReport;
-}) {
+function DegradationSection({ report }: { readonly report: ConversionReport }) {
   if (report.degradations.length === 0) {
     return null;
   }

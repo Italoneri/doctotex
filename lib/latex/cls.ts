@@ -1,12 +1,5 @@
 import { bibliographySetup } from "./bib";
-import {
-  fontSize,
-  mm,
-  prefixed,
-  pt,
-  trim,
-  TEX_LEADING_RATIO,
-} from "./format";
+import { fontSize, mm, prefixed, pt, trim, TEX_LEADING_RATIO } from "./format";
 import {
   FONTSPEC_SETTER,
   isSubstitution,
@@ -15,13 +8,14 @@ import {
   type LatexFamily,
 } from "./fonts";
 import { listPreamble } from "./list";
+import { tableNeedsOf, tablePreamble, type TableNeeds } from "./table";
 import {
   DEFAULT_OPTIONS,
   usesFontspec,
   type Engine,
   type GenerationOptions,
 } from "./options";
-import type { Paragraph } from "@/lib/extract/body";
+import { paragraphsOf, type Block, type Paragraph } from "@/lib/extract/body";
 import type {
   Alignment,
   EffectiveStyle,
@@ -75,7 +69,7 @@ export interface ClassInput {
    * hand-formatted run appears nowhere in the stylesheet, and a class that
    * loaded only the declared faces would render that run in the wrong one.
    */
-  readonly paragraphs?: readonly Paragraph[];
+  readonly blocks?: readonly Block[];
   readonly headerFooter?: HeaderFooterText;
   readonly usage?: StyleUsage;
   readonly options?: GenerationOptions;
@@ -92,13 +86,12 @@ interface Needs {
   readonly justifiedParagraphs: boolean;
   readonly shapedParagraphs: boolean;
   readonly lists: boolean;
+  readonly tables: TableNeeds;
 }
 
-function needsOf(
-  profile: StyleProfile,
-  paragraphs: readonly Paragraph[],
-): Needs {
+function needsOf(profile: StyleProfile, blocks: readonly Block[]): Needs {
   const bodyAlignment = profile.defaults.paragraph.alignment ?? "left";
+  const paragraphs = paragraphsOf(blocks);
 
   return {
     strikeOrUnderline: paragraphs.some((paragraph) =>
@@ -113,6 +106,7 @@ function needsOf(
     // Driven by what the paragraphs resolved to, not by the presence of
     // numbering.xml: Word ships that part in documents that have no list.
     lists: paragraphs.some((p) => p.list !== undefined),
+    tables: tableNeedsOf(blocks),
   };
 }
 
@@ -158,8 +152,9 @@ export function generateClass(input: ClassInput): string {
 export function preambleLines(input: ClassInput): readonly string[] {
   const { profile } = input;
   const options = input.options ?? DEFAULT_OPTIONS;
-  const paragraphs = input.paragraphs ?? [];
-  const needs = needsOf(profile, paragraphs);
+  const blocks = input.blocks ?? [];
+  const paragraphs = paragraphsOf(blocks);
+  const needs = needsOf(profile, blocks);
 
   const bodySizePt = profile.defaults.text.fontSizePt ?? DEFAULT_BODY_SIZE_PT;
   const bodyFamily = mapFont(profile.defaults.text.fontFamily).family;
@@ -169,6 +164,7 @@ export function preambleLines(input: ClassInput): readonly string[] {
     ...fontSetup(profile, paragraphs, bodySizePt, options.engine),
     ...prefixed(inlineDecorations(needs)),
     ...prefixed(needs.lists ? listPreamble() : []),
+    ...prefixed(tablePreamble(needs.tables)),
     "",
     ...geometry(profile),
     "",
@@ -385,7 +381,13 @@ function spacing(
   bodySizePt: number,
   needs: Needs,
 ): readonly string[] {
-  const lines = ["\\RequirePackage{setspace}", "\\RequirePackage{xcolor}"];
+  // `\cellcolor` comes from xcolor's table option, and an option cannot be
+  // added to a package that is already loaded, so the decision is made here
+  // rather than beside the tables that need it.
+  const xcolor = needs.tables.cellColours
+    ? "\\RequirePackage[table]{xcolor}  % table: the document shades table cells"
+    : "\\RequirePackage{xcolor}";
+  const lines = ["\\RequirePackage{setspace}", xcolor];
 
   if (needs.justifiedParagraphs) {
     lines.push(

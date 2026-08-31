@@ -1,4 +1,10 @@
-import { attribute, child, parseXml, toArray, type XmlNode } from "@/lib/docx/xml";
+import {
+  attribute,
+  child,
+  parseXml,
+  toArray,
+  type XmlNode,
+} from "@/lib/docx/xml";
 import type { Degradations } from "./report";
 import { toInteger, twipsToMm } from "./units";
 
@@ -27,13 +33,7 @@ export type ListFormat =
  * Resolving them to a shape here keeps the font out of the LaTeX layer.
  */
 export type BulletGlyph =
-  | "disc"
-  | "circle"
-  | "square"
-  | "dash"
-  | "asterisk"
-  | "arrow"
-  | "diamond";
+  "disc" | "circle" | "square" | "dash" | "asterisk" | "arrow" | "diamond";
 
 export interface ListLevel {
   /** 0-based, matching `w:ilvl`. Word allows nine. */

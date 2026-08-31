@@ -9,6 +9,7 @@ export type DegradationCode =
   | "custom-list-label"
   | "unresolved-list"
   | "nested-table"
+  | "table-cell-alignment"
   | "table-borders"
   | "unresolved-image"
   | "unsupported-image-format";

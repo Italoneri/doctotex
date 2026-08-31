@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { listsNested } from "@/fixtures/documents";
+import { listsNested, tableMerged } from "@/fixtures/documents";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
 import { openDocx } from "@/lib/docx/archive";
-import type { Paragraph } from "@/lib/extract/body";
+import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
 import { extractDocument } from "@/lib/extract/profile";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE } from "./bib";
@@ -171,7 +171,7 @@ function sourcesFor(overrides: Partial<GenerationOptions>): {
     options,
     sources: generateSources({
       profile: PROFILE,
-      paragraphs: PARAGRAPHS,
+      blocks: paragraphBlocks(PARAGRAPHS),
       options,
     }),
   };
@@ -369,7 +369,10 @@ function describe_(result: CompileResult): string {
  * LaTeX and is not, and only the engine can say which. They build their own
  * `.docx`, so they run on a checkout that has no fixture on disk.
  */
-const FEATURE_DOCUMENTS = [["a three-level nested list", listsNested]] as const;
+const FEATURE_DOCUMENTS = [
+  ["a three-level nested list", listsNested],
+  ["a table with merged cells", tableMerged],
+] as const;
 
 /**
  * pdfLaTeX and XeLaTeX select fonts by entirely different machinery, which is
@@ -459,3 +462,54 @@ describe("a document with lists", () => {
 function count(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
+
+// Needs no daemon: what the generator emitted is readable without running it.
+describe("a document with tables", () => {
+  it("carries the grid, the merges and the shading", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("multicolumn{2}");
+    expect(main).toContain("multirow{2}");
+    expect(main).toContain("cellcolor[HTML]{D9E2F3}");
+  });
+
+  it("repeats a header row across the pages a long table crosses", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("begin{xltabular}");
+    expect(main).toContain("endhead");
+  });
+
+  it("opens and closes every table it begins", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(count(main, "begin{xltabular}")).toBe(count(main, "end{xltabular}"));
+  });
+
+  it("loads the table packages only for a document that has tables", async () => {
+    const withTables = await sourcesFromDocument(tableMerged);
+
+    expect(withTables.get(CLASS_FILE)).toContain("RequirePackage{tabularx}");
+    expect(withTables.get(CLASS_FILE)).toContain("RequirePackage{multirow}");
+    expect(sourcesFor({}).sources.get(CLASS_FILE)).not.toContain("tabularx");
+  });
+
+  // \cellcolor comes from xcolor's table option, and an option cannot be added
+  // to a package that is already loaded.
+  it("loads xcolor with its table option where cells are shaded", async () => {
+    const withTables = await sourcesFromDocument(tableMerged);
+
+    expect(withTables.get(CLASS_FILE)).toContain(
+      "RequirePackage[table]{xcolor}",
+    );
+    expect(sourcesFor({}).sources.get(CLASS_FILE)).toContain(
+      "RequirePackage{xcolor}",
+    );
+  });
+
+  it("no longer says tables are missing from the template", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(main).not.toContain("%% TODO: the source document contains");
+  });
+});

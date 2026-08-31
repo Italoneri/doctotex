@@ -1,11 +1,13 @@
 import {
   COLUMN_BREAK,
   PAGE_BREAK,
+  type Block,
   type Paragraph,
   type TextRun,
 } from "@/lib/extract/body";
 import type { ListMarker } from "@/lib/extract/numbering";
 import { EMPTY_REPORT, type ConversionReport } from "@/lib/extract/report";
+import type { TableCell } from "@/lib/extract/table";
 import type { Alignment, StyleProfile, TextStyle } from "@/lib/extract/types";
 import { bibliographySetup } from "./bib";
 import {
@@ -24,6 +26,7 @@ import {
 import { escapeLatex } from "./escape";
 import { fontSize, mm, prefixed, pt } from "./format";
 import { mapFont } from "./fonts";
+import { renderTable } from "./table";
 import {
   bibToolFor,
   compileCommands,
@@ -45,7 +48,7 @@ const SECTIONING = [
 ] as const;
 
 export interface DocumentInput extends ClassInput {
-  readonly paragraphs: readonly Paragraph[];
+  readonly blocks: readonly Block[];
   readonly report?: ConversionReport;
 }
 
@@ -58,11 +61,9 @@ export function generateDocument(input: DocumentInput): string {
     ...opening(input, options),
     "",
     "\\begin{document}",
-    ...prefixed(
-      conversionNotes(input.profile, input.report ?? EMPTY_REPORT),
-    ),
+    ...prefixed(conversionNotes(input.profile, input.report ?? EMPTY_REPORT)),
     "",
-    ...renderBody(input.paragraphs, context),
+    ...renderBody(input.blocks, context),
     ...(bibliography.body.length === 0 ? [] : ["", ...bibliography.body]),
     "",
     "\\end{document}",
@@ -90,7 +91,6 @@ function conversionNotes(
 
 function missingFeatures(profile: StyleProfile): readonly string[] {
   const missing = [
-    profile.features.tables && "tables",
     profile.features.images && "images",
     profile.features.ommlEquations && "equations",
     profile.features.oleObjects && "embedded objects",
@@ -205,7 +205,18 @@ interface Context {
   readonly profile: StyleProfile;
   readonly roles: ReadonlyMap<string, Role>;
   readonly baselines: ReadonlyMap<string, TextStyle>;
+  readonly surface: Surface;
 }
+
+/**
+ * Where the text being written will sit.
+ *
+ * The same structure means different things in each. A line break is a double
+ * backslash in the body and ends the row in a cell; a page break is a command
+ * in the body and an error in a cell. Neither distinction can be made from the
+ * paragraph, because the paragraph is identical either way.
+ */
+type Surface = "body" | "cell";
 
 /**
  * Word marks a heading by pointing the paragraph at a style, so the mapping
@@ -224,7 +235,7 @@ function contextOf(profile: StyleProfile): Context {
     baselines.set(profile.title.styleId, profile.title.text);
   }
 
-  return { profile, roles, baselines };
+  return { profile, roles, baselines, surface: "body" };
 }
 
 /**
@@ -236,7 +247,7 @@ function contextOf(profile: StyleProfile): Context {
  * which is why this is a fold rather than a map.
  */
 function renderBody(
-  paragraphs: readonly Paragraph[],
+  blocks: readonly Block[],
   context: Context,
 ): readonly string[] {
   const lines: string[] = [];
@@ -255,7 +266,18 @@ function renderBody(
     }
   };
 
-  for (const paragraph of paragraphs) {
+  for (const block of blocks) {
+    if (block.kind === "table") {
+      // A table cannot sit inside a list environment and stay readable, and an
+      // item it interrupted was not one item in two halves to begin with.
+      closeTo(0);
+      lines.push(
+        ...renderTable(block.table, (cell) => renderCell(cell, context)),
+      );
+      continue;
+    }
+
+    const { paragraph } = block;
     const marker = paragraph.list;
 
     if (!marker) {
@@ -286,6 +308,19 @@ function renderBody(
 
   closeTo(0);
   return lines;
+}
+
+/**
+ * One cell's contents, as the single argument a LaTeX column takes.
+ *
+ * The blocks inside go through the same renderer the body does — a list in a
+ * cell is still a list — with the surface changed so that nothing it emits ends
+ * the row it is sitting in.
+ */
+function renderCell(cell: TableCell, context: Context): string {
+  return renderBody(cell.blocks, { ...context, surface: "cell" })
+    .join("\n")
+    .trim();
 }
 
 /** How many levels may stay open for an item at `level`. */
@@ -360,8 +395,13 @@ function render(paragraph: Paragraph, context: Context): string {
   const rendered = renderParagraph(paragraph, context);
 
   // `w:pageBreakBefore` breaks before the paragraph whether or not it is a
-  // heading, so it is applied outside the choice of sectioning command.
-  if (rendered === "" || !paragraph.style.pageBreakBefore) {
+  // heading, so it is applied outside the choice of sectioning command. Inside
+  // a table cell there is no page to break, and asking for one is an error.
+  if (
+    rendered === "" ||
+    !paragraph.style.pageBreakBefore ||
+    context.surface === "cell"
+  ) {
     return rendered;
   }
   return `\\newpage\n${rendered}`;
@@ -398,7 +438,12 @@ function renderParagraph(paragraph: Paragraph, context: Context): string {
 /** The paragraph's runs as LaTeX, with nothing said about where they sit. */
 function bodyOf(paragraph: Paragraph, context: Context): string {
   return dropTrailingBreak(
-    renderRuns(paragraph.runs, baselineFor(paragraph, context)),
+    renderRuns(
+      paragraph.runs,
+      baselineFor(paragraph, context),
+      context.surface,
+    ),
+    context.surface,
   );
 }
 
@@ -447,8 +492,12 @@ function alignmentSwitch(paragraph: Paragraph, context: Context): string {
   return own === body ? "" : (ALIGNMENT_SWITCHES.get(own) ?? "");
 }
 
-function renderRuns(runs: readonly TextRun[], baseline: TextStyle): string {
-  return runs.map((run) => renderRun(run, baseline)).join("");
+function renderRuns(
+  runs: readonly TextRun[],
+  baseline: TextStyle,
+  surface: Surface,
+): string {
+  return runs.map((run) => renderRun(run, baseline, surface)).join("");
 }
 
 /**
@@ -458,7 +507,7 @@ function renderRuns(runs: readonly TextRun[], baseline: TextStyle): string {
  * `ulem` measures its argument to draw under it, and a `\\` inside that
  * argument is an error rather than a line break.
  */
-const STRUCTURE: ReadonlyMap<string, string> = new Map([
+const BODY_STRUCTURE: ReadonlyMap<string, string> = new Map([
   ["\n", " \\\\\n"],
   [PAGE_BREAK, "\n\\newpage\n"],
   [
@@ -467,11 +516,31 @@ const STRUCTURE: ReadonlyMap<string, string> = new Map([
   ],
 ]);
 
-function renderRun(run: TextRun, baseline: TextStyle): string {
+/**
+ * The same three, inside a table cell.
+ *
+ * `\\` would end the row, so a line break is `\newline`. The page and column
+ * breaks are dropped rather than commented: a `%` inside a cell runs to the end
+ * of the line and would swallow the `&` that follows it. The report says they
+ * were dropped, which a comment TeX ate would not.
+ */
+const CELL_STRUCTURE: ReadonlyMap<string, string> = new Map([
+  ["\n", " \\newline\n"],
+  [PAGE_BREAK, " "],
+  [COLUMN_BREAK, " "],
+]);
+
+function renderRun(
+  run: TextRun,
+  baseline: TextStyle,
+  surface: Surface,
+): string {
+  const structures = surface === "cell" ? CELL_STRUCTURE : BODY_STRUCTURE;
+
   return run.text
     .split(/([\n\f\v])/)
     .map((piece) => {
-      const structure = STRUCTURE.get(piece);
+      const structure = structures.get(piece);
       if (structure !== undefined) {
         return structure;
       }
@@ -492,8 +561,10 @@ function withTabs(text: string): string {
  * here to end" error. Stripping it at the paragraph rather than at the run is
  * what keeps a break between two runs of a sentence.
  */
-function dropTrailingBreak(body: string): string {
-  return body.replace(/(\s*\\\\\s*)+$/, "");
+function dropTrailingBreak(body: string, surface: Surface): string {
+  const trailing =
+    surface === "cell" ? /(\s*\\newline\s*)+$/ : /(\s*\\\\\s*)+$/;
+  return body.replace(trailing, "");
 }
 
 /**

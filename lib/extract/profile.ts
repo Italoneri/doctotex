@@ -1,6 +1,6 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
-import { extractParagraphs, type Paragraph } from "./body";
+import { extractBlocks, type Block } from "./body";
 import { parseNumbering } from "./numbering";
 import { extractPage } from "./page";
 import { collectDegradations, type ConversionReport } from "./report";
@@ -26,7 +26,7 @@ const NORMAL_STYLE_ID = "Normal";
 /** What one `.docx` yields: how it looks, what it says, and what was lost. */
 export interface ExtractedDocument {
   readonly profile: StyleProfile;
-  readonly paragraphs: readonly Paragraph[];
+  readonly blocks: readonly Block[];
   readonly report: ConversionReport;
 }
 
@@ -52,7 +52,7 @@ export async function extractDocument(
     degradations,
   );
 
-  const paragraphs = extractParagraphs(documentXml, {
+  const blocks = extractBlocks(documentXml, {
     sheet,
     numbering,
     degradations,
@@ -69,7 +69,7 @@ export async function extractDocument(
       theme,
       features: detectFeatures(archive, documentXml),
     },
-    paragraphs,
+    blocks,
     // Read after the walk: the collector is filled by it.
     report: degradations.report(),
   };

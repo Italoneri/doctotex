@@ -1,6 +1,6 @@
 import { DocxFormatError, openDocx } from "@/lib/docx/archive";
 import { describeRejection, rejectUpload } from "@/lib/docx/upload";
-import { countStyleUsage } from "@/lib/extract/body";
+import { countStyleUsage, paragraphsOf } from "@/lib/extract/body";
 import { extractDocument } from "@/lib/extract/profile";
 import type { ConversionReport } from "@/lib/extract/report";
 import type { StyleProfile } from "@/lib/extract/types";
@@ -74,7 +74,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const archive = await openDocx(new Uint8Array(await file.arrayBuffer()));
-    const { profile, paragraphs, report } = await extractDocument(archive);
+    const { profile, blocks, report } = await extractDocument(archive);
 
     return Response.json({
       ok: true,
@@ -83,9 +83,9 @@ export async function POST(request: Request): Promise<Response> {
       entries: archive.entries,
       profile,
       sources: Object.fromEntries(
-        generateSources({ profile, paragraphs, options, report }),
+        generateSources({ profile, blocks, options, report }),
       ),
-      styleUsage: Object.fromEntries(countStyleUsage(paragraphs)),
+      styleUsage: Object.fromEntries(countStyleUsage(paragraphsOf(blocks))),
       report,
       options,
     } satisfies ConvertSuccess);

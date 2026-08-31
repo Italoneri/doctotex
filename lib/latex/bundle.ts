@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { countStyleUsage, type Paragraph } from "@/lib/extract/body";
+import { countStyleUsage, paragraphsOf, type Block } from "@/lib/extract/body";
 import type { ConversionReport } from "@/lib/extract/report";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE, bibliographyStub } from "./bib";
@@ -18,7 +18,7 @@ export type SourceFiles = ReadonlyMap<string, string>;
 
 export interface GenerateInput {
   readonly profile: StyleProfile;
-  readonly paragraphs: readonly Paragraph[];
+  readonly blocks: readonly Block[];
   readonly headerFooter?: HeaderFooterText;
   readonly options?: GenerationOptions;
   /** What the extraction had to change, written into the generated document. */
@@ -29,9 +29,9 @@ export function generateSources(input: GenerateInput): SourceFiles {
   const options = input.options ?? DEFAULT_OPTIONS;
   const shared = {
     profile: input.profile,
-    paragraphs: input.paragraphs,
+    blocks: input.blocks,
     headerFooter: input.headerFooter,
-    usage: countStyleUsage(input.paragraphs),
+    usage: countStyleUsage(paragraphsOf(input.blocks)),
     options,
     report: input.report,
   };

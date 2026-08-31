@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Paragraph } from "@/lib/extract/body";
+import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
 import type { StyleProfile, TextStyle } from "@/lib/extract/types";
 import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
 import { generateDocument } from "./tex";
@@ -49,7 +49,11 @@ function render(
   paragraphs: readonly Paragraph[],
   options: GenerationOptions = DEFAULT_OPTIONS,
 ): string {
-  return generateDocument({ profile: PROFILE, paragraphs, options });
+  return generateDocument({
+    profile: PROFILE,
+    blocks: paragraphBlocks(paragraphs),
+    options,
+  });
 }
 
 describe("document shell", () => {
@@ -339,7 +343,7 @@ describe("run appearance", () => {
     };
     const tex = generateDocument({
       profile: withBoldHeading,
-      paragraphs: [para([run("Intro", { bold: true })], "Titre1")],
+      blocks: paragraphBlocks([para([run("Intro", { bold: true })], "Titre1")]),
     });
 
     expect(tex).toContain("\\section*{Intro}");
@@ -356,7 +360,9 @@ describe("run appearance", () => {
     };
     const tex = generateDocument({
       profile: withBoldHeading,
-      paragraphs: [para([run("light", { bold: false })], "Titre1")],
+      blocks: paragraphBlocks([
+        para([run("light", { bold: false })], "Titre1"),
+      ]),
     });
 
     expect(tex).toContain("{\\mdseries{}light}");
@@ -409,24 +415,34 @@ describe("paragraph shape", () => {
 });
 
 describe("what the template does not carry", () => {
-  it("says so where the document has tables", () => {
-    const withTables: StyleProfile = {
+  it("says so where the document has images", () => {
+    const withImages: StyleProfile = {
       ...PROFILE,
-      features: { ...PROFILE.features, tables: true },
+      features: { ...PROFILE.features, images: true },
     };
-    const tex = generateDocument({ profile: withTables, paragraphs: [] });
+    const tex = generateDocument({ profile: withImages, blocks: [] });
 
-    expect(tex).toContain("%% TODO: the source document contains tables");
+    expect(tex).toContain("%% TODO: the source document contains images");
+  });
+
+  it("names every missing feature rather than only the first", () => {
+    const withBoth: StyleProfile = {
+      ...PROFILE,
+      features: { ...PROFILE.features, images: true, ommlEquations: true },
+    };
+    const tex = generateDocument({ profile: withBoth, blocks: [] });
+
+    expect(tex).toContain("images and equations");
   });
 
   // The numbering part is present in Word documents that have no list in them,
-  // and lists are carried now in any case.
-  it("says nothing about lists, which are carried", () => {
-    const withNumbering: StyleProfile = {
+  // and both lists and tables are carried now in any case.
+  it("says nothing about lists or tables, which are carried", () => {
+    const carried: StyleProfile = {
       ...PROFILE,
-      features: { ...PROFILE.features, numbering: true },
+      features: { ...PROFILE.features, numbering: true, tables: true },
     };
-    const tex = generateDocument({ profile: withNumbering, paragraphs: [] });
+    const tex = generateDocument({ profile: carried, blocks: [] });
 
     expect(tex).not.toContain("%% TODO: the source document");
   });
@@ -440,7 +456,7 @@ describe("what the conversion changed", () => {
   it("names each degradation and why it happened", () => {
     const tex = generateDocument({
       profile: PROFILE,
-      paragraphs: [],
+      blocks: [],
       report: {
         degradations: [
           {
@@ -459,7 +475,7 @@ describe("what the conversion changed", () => {
   it("does not count a degradation that happened once", () => {
     const tex = generateDocument({
       profile: PROFILE,
-      paragraphs: [],
+      blocks: [],
       report: {
         degradations: [
           {

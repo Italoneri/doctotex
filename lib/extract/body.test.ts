@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   countStyleUsage,
-  extractParagraphs,
+  extractBlocks,
+  paragraphsOf,
   type BodyContext,
   type Paragraph,
 } from "./body";
@@ -18,6 +19,17 @@ function context(
 ): BodyContext {
   return { sheet, numbering, degradations };
 }
+
+const NUMBERING = parseNumbering(
+  `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:abstractNum w:abstractNumId="0">
+      <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+      <w:lvl w:ilvl="1"><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2)"/></w:lvl>
+    </w:abstractNum>
+    <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+  </w:numbering>`,
+  collectDegradations(),
+);
 
 function documentXml(body: string): string {
   return `<?xml version="1.0"?>
@@ -39,7 +51,7 @@ function read(
   xml: string,
   sheet: StyleSheet = EMPTY_SHEET,
 ): readonly Paragraph[] {
-  return extractParagraphs(documentXml(xml), context(sheet));
+  return paragraphsOf(extractBlocks(documentXml(xml), context(sheet)));
 }
 
 function textOf(xml: string): readonly string[] {
@@ -82,7 +94,7 @@ describe("extractParagraphs", () => {
   });
 
   it("returns nothing when there is no body", () => {
-    expect(extractParagraphs("<nonsense/>", context())).toEqual([]);
+    expect(extractBlocks("<nonsense/>", context())).toEqual([]);
   });
 });
 
@@ -404,21 +416,12 @@ describe("the cascade", () => {
 });
 
 describe("list membership", () => {
-  const NUMBERING = parseNumbering(
-    `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-      <w:abstractNum w:abstractNumId="0">
-        <w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
-        <w:lvl w:ilvl="1"><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%2)"/></w:lvl>
-      </w:abstractNum>
-      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
-    </w:numbering>`,
-    collectDegradations(),
-  );
-
   function listed(xml: string, sheet: StyleSheet = EMPTY_SHEET) {
-    return extractParagraphs(
-      documentXml(xml),
-      context(sheet, NUMBERING, collectDegradations()),
+    return paragraphsOf(
+      extractBlocks(
+        documentXml(xml),
+        context(sheet, NUMBERING, collectDegradations()),
+      ),
     );
   }
 
@@ -481,7 +484,7 @@ describe("list membership", () => {
 
   it("reports a paragraph pointing at a list the document never defined", () => {
     const degradations = collectDegradations();
-    extractParagraphs(
+    extractBlocks(
       documentXml(item("orphan", "42", 0)),
       context(EMPTY_SHEET, NUMBERING, degradations),
     );
@@ -489,5 +492,165 @@ describe("list membership", () => {
     expect(degradations.report().degradations[0]).toMatchObject({
       code: "unresolved-list",
     });
+  });
+});
+
+describe("tables", () => {
+  function blocks(xml: string, degradations = collectDegradations()) {
+    return extractBlocks(
+      documentXml(xml),
+      context(EMPTY_SHEET, NUMBERING, degradations),
+    );
+  }
+
+  function cell(text: string, properties = ""): string {
+    return `<w:tc><w:tcPr>${properties}</w:tcPr>${paragraph(
+      `<w:r><w:t>${text}</w:t></w:r>`,
+    )}</w:tc>`;
+  }
+
+  function table(rows: string): string {
+    return `<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>${rows}</w:tbl>`;
+  }
+
+  function row(cells: string, properties = ""): string {
+    return `<w:tr>${properties}${cells}</w:tr>`;
+  }
+
+  it("keeps a table in document order between the paragraphs around it", () => {
+    const xml =
+      paragraph("<w:r><w:t>before</w:t></w:r>") +
+      table(row(cell("a") + cell("b"))) +
+      paragraph("<w:r><w:t>after</w:t></w:r>");
+
+    expect(blocks(xml).map((block) => block.kind)).toEqual([
+      "paragraph",
+      "table",
+      "paragraph",
+    ]);
+  });
+
+  it("reads the cells of each row", () => {
+    const found = blocks(table(row(cell("a") + cell("b"))))[0];
+
+    expect(found?.kind === "table" && found.table.rows[0]?.cells.length).toBe(
+      2,
+    );
+    expect(
+      found?.kind === "table" && found.table.rows[0]?.cells[0]?.blocks.length,
+    ).toBe(1);
+  });
+
+  it("counts how many rows a vertical merge covers", () => {
+    const found = blocks(
+      table(
+        row(cell("top", `<w:vMerge w:val="restart"/>`) + cell("x")) +
+          row(cell("", `<w:vMerge/>`) + cell("y")) +
+          row(cell("", `<w:vMerge/>`) + cell("z")),
+      ),
+    )[0];
+
+    expect(
+      found?.kind === "table" && found.table.rows[0]?.cells[0],
+    ).toMatchObject({ verticalMerge: "restart", rowSpan: 3 });
+  });
+
+  // A cell spanning two columns shifts every cell to its right out of step
+  // with the row above, so the extent is counted by grid column, not by index.
+  it("counts a merge under a cell that spans columns", () => {
+    const found = blocks(
+      table(
+        row(cell("wide", `<w:gridSpan w:val="2"/>`)) +
+          row(cell("a") + cell("b", `<w:vMerge w:val="restart"/>`)) +
+          row(cell("c") + cell("", `<w:vMerge/>`)),
+      ),
+    )[0];
+
+    expect(
+      found?.kind === "table" && found.table.rows[1]?.cells[1],
+    ).toMatchObject({ rowSpan: 2 });
+  });
+
+  it("leaves an unmerged cell covering one row", () => {
+    const found = blocks(table(row(cell("a") + cell("b"))))[0];
+
+    expect(
+      found?.kind === "table" && found.table.rows[0]?.cells[0],
+    ).toMatchObject({ verticalMerge: "none", rowSpan: 1 });
+  });
+
+  it("reads a repeating header row", () => {
+    const found = blocks(
+      table(row(cell("h"), `<w:trPr><w:tblHeader/></w:trPr>`) + row(cell("d"))),
+    )[0];
+
+    expect(
+      found?.kind === "table" && found.table.rows.map((r) => r.repeatsAsHeader),
+    ).toEqual([true, false]);
+  });
+
+  it("reads a list inside a cell as a list", () => {
+    const item = `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>one</w:t></w:r></w:p>`;
+    const found = blocks(table(row(`<w:tc><w:tcPr/>${item}</w:tc>`)))[0];
+
+    expect(
+      found?.kind === "table" &&
+        found.table.rows[0]?.cells[0]?.blocks[0]?.kind === "paragraph" &&
+        found.table.rows[0]?.cells[0]?.blocks[0]?.paragraph.list?.numId,
+    ).toBe("1");
+  });
+
+  // A tabularx inside a cell of another, inside a longtable that may contain
+  // neither, is where the generated document stops compiling.
+  it("flattens a nested table to its paragraphs and says so", () => {
+    const degradations = collectDegradations();
+    const inner = table(row(cell("deep")));
+    const found = blocks(
+      table(row(`<w:tc><w:tcPr/>${inner}</w:tc>`)),
+      degradations,
+    )[0];
+
+    const cells = found?.kind === "table" ? found.table.rows[0]?.cells : [];
+    expect(cells?.[0]?.blocks.every((b) => b.kind === "paragraph")).toBe(true);
+    expect(degradations.report().degradations[0]).toMatchObject({
+      code: "nested-table",
+    });
+  });
+
+  it("reports a cell that asks to sit anywhere but the top", () => {
+    const degradations = collectDegradations();
+    blocks(table(row(cell("a", `<w:vAlign w:val="center"/>`))), degradations);
+
+    expect(degradations.report().degradations[0]).toMatchObject({
+      code: "table-cell-alignment",
+    });
+  });
+
+  it("descends into a content control, which wraps ordinary content", () => {
+    const xml = `<w:sdt><w:sdtContent>${paragraph(
+      "<w:r><w:t>inside</w:t></w:r>",
+    )}</w:sdtContent></w:sdt>`;
+
+    expect(paragraphsOf(blocks(xml)).map((p) => p.runs[0]?.text)).toEqual([
+      "inside",
+    ]);
+  });
+});
+
+describe("paragraphsOf", () => {
+  it("reaches the paragraphs inside table cells", () => {
+    const xml =
+      paragraph("<w:r><w:t>outside</w:t></w:r>") +
+      `<w:tbl><w:tr><w:tc>${paragraph("<w:r><w:t>inside</w:t></w:r>")}</w:tc></w:tr></w:tbl>`;
+
+    const found = extractBlocks(
+      documentXml(xml),
+      context(EMPTY_SHEET, NUMBERING, collectDegradations()),
+    );
+
+    expect(paragraphsOf(found).map((p) => p.runs[0]?.text)).toEqual([
+      "outside",
+      "inside",
+    ]);
   });
 });
