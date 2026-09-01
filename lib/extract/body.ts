@@ -1,41 +1,286 @@
 import {
   attributeOf,
-  descendSequence,
   findChild,
   findDescendant,
-  hasChild,
   parseSequence,
   textOf,
+  toXmlNode,
   type SequenceNode,
 } from "@/lib/docx/sequence";
-import { toToggle } from "./units";
+import { resolveMarker, type ListMarker, type Numbering } from "./numbering";
+import type { Degradations } from "./report";
+import {
+  readParagraphStyle,
+  readTextStyle,
+  resolveParagraph,
+  resolveRun,
+  type StyleSheet,
+} from "./styles";
+import {
+  readCellMargins,
+  readCellProperties,
+  readRowIsHeader,
+  readTableBorders,
+  readTableGrid,
+  type TableCell,
+  type TableProfile,
+  type TableRow,
+} from "./table";
+import type { EffectiveStyle, ParagraphStyle, TextStyle } from "./types";
+import { toInteger } from "./units";
+
+/**
+ * Structure XML itself cannot carry, so it can travel inside the text.
+ *
+ * XML 1.0 excludes every control character below U+0020 except tab, line feed
+ * and carriage return, which leaves form feed and vertical tab impossible in a
+ * `w:t` and therefore unambiguous here.
+ */
+export const PAGE_BREAK = "\f";
+export const COLUMN_BREAK = "\v";
 
 export interface TextRun {
   readonly text: string;
-  readonly bold: boolean;
-  readonly italic: boolean;
+  /** Fully resolved: the cascade has already run, so nothing here inherits. */
+  readonly style: TextStyle;
 }
 
 export interface Paragraph {
-  /** Localised, e.g. `Titre1`; resolved against the stylesheet by the caller. */
+  /** Localised, e.g. `Titre1`. Kept so the sectioning role can be recovered. */
   readonly styleId?: string;
+  /** Fully resolved, including the paragraph's own `w:pPr`. */
+  readonly style: ParagraphStyle;
   readonly runs: readonly TextRun[];
+  /** Set where `w:numPr` puts the paragraph in a list, with its level resolved. */
+  readonly list?: ListMarker;
 }
 
 /**
- * Paragraphs in document order, with their runs in order within each.
+ * What sits at the top level of a document, and inside a table cell.
  *
- * Tables and drawings are skipped rather than positioned: placing them needs
- * the same ordered walk this uses, so phase 5 extends the switch below instead
- * of reworking the traversal.
+ * A discriminated union rather than a paragraph with optional table fields: a
+ * table has no runs and a paragraph has no rows, and a shape that allows both
+ * at once is a shape every reader has to check twice.
  */
-export function extractParagraphs(documentXml: string): readonly Paragraph[] {
+export type Block =
+  | { readonly kind: "paragraph"; readonly paragraph: Paragraph }
+  | { readonly kind: "table"; readonly table: TableProfile };
+
+/**
+ * Everything the walk needs that is not the node in front of it.
+ *
+ * Passed as one value rather than three parameters because the walk is
+ * recursive and every reader below it needs the same three; threading them
+ * separately is how a reader ends up quietly missing one.
+ */
+export interface BodyContext {
+  readonly sheet: StyleSheet;
+  readonly numbering: Numbering;
+  readonly degradations: Degradations;
+}
+
+/**
+ * How deep a table may sit before its contents are flattened.
+ *
+ * One means top-level tables only. A table inside a cell is legal OOXML and
+ * rare in practice, and the LaTeX for it — a tabularx inside a cell of another,
+ * inside a longtable that may not contain either — is where the generated
+ * document stops compiling. Flattening loses the inner grid and keeps the text.
+ */
+const MAX_TABLE_DEPTH = 1;
+
+/** Blocks in document order, with their runs in order within each paragraph. */
+export function extractBlocks(
+  documentXml: string,
+  context: BodyContext,
+): readonly Block[] {
   const body = findDescendant(parseSequence(documentXml), "w:body");
-  if (!body) {
-    return [];
+  return body ? readBlocks(body.children, context, 0) : [];
+}
+
+/** Paragraphs as the blocks they are, for a caller that has only paragraphs. */
+export function paragraphBlocks(
+  paragraphs: readonly Paragraph[],
+): readonly Block[] {
+  return paragraphs.map((paragraph) => ({ kind: "paragraph", paragraph }));
+}
+
+/** Every paragraph in a block list, including the ones inside table cells. */
+export function paragraphsOf(blocks: readonly Block[]): readonly Paragraph[] {
+  return blocks.flatMap((block) =>
+    block.kind === "paragraph"
+      ? [block.paragraph]
+      : block.table.rows.flatMap((row) =>
+          row.cells.flatMap((cell) => paragraphsOf(cell.blocks)),
+        ),
+  );
+}
+
+function readBlocks(
+  nodes: readonly SequenceNode[],
+  context: BodyContext,
+  depth: number,
+): readonly Block[] {
+  const blocks: Block[] = [];
+
+  for (const node of nodes) {
+    switch (node.name) {
+      case "w:p":
+        blocks.push({
+          kind: "paragraph",
+          paragraph: readParagraph(node, context),
+        });
+        break;
+      case "w:tbl":
+        blocks.push(...readTableBlock(node, context, depth));
+        break;
+      // A content control wraps ordinary content; its own element carries none.
+      case "w:sdt":
+        blocks.push(
+          ...readBlocks(
+            findChild(node, "w:sdtContent")?.children ?? [],
+            context,
+            depth,
+          ),
+        );
+        break;
+      default:
+        break;
+    }
   }
 
-  return body.children.filter((node) => node.name === "w:p").map(readParagraph);
+  return blocks;
+}
+
+function readTableBlock(
+  node: SequenceNode,
+  context: BodyContext,
+  depth: number,
+): readonly Block[] {
+  if (depth >= MAX_TABLE_DEPTH) {
+    context.degradations.note(
+      "nested-table",
+      "A table sat inside another table's cell. Its text is kept as ordinary paragraphs; its own rows and columns are not.",
+    );
+    return flattenTable(node, context, depth);
+  }
+
+  return [{ kind: "table", table: readTable(node, context, depth + 1) }];
+}
+
+/** A nested table's paragraphs, in order, with the grid around them dropped. */
+function flattenTable(
+  node: SequenceNode,
+  context: BodyContext,
+  depth: number,
+): readonly Block[] {
+  return node.children
+    .filter((row) => row.name === "w:tr")
+    .flatMap((row) =>
+      row.children
+        .filter((cell) => cell.name === "w:tc")
+        .flatMap((cell) => readBlocks(cell.children, context, depth)),
+    );
+}
+
+function readTable(
+  node: SequenceNode,
+  context: BodyContext,
+  depth: number,
+): TableProfile {
+  const rows = node.children
+    .filter((row) => row.name === "w:tr")
+    .map((row) => readRow(row, context, depth));
+
+  return {
+    columns: readTableGrid(node),
+    rows: withRowSpans(rows),
+    borders: readTableBorders(node),
+    cellMargins: readCellMargins(node),
+  };
+}
+
+function readRow(
+  node: SequenceNode,
+  context: BodyContext,
+  depth: number,
+): TableRow {
+  return {
+    repeatsAsHeader: readRowIsHeader(node),
+    cells: node.children
+      .filter((cell) => cell.name === "w:tc")
+      .map((cell) => readCell(cell, context, depth)),
+  };
+}
+
+function readCell(
+  node: SequenceNode,
+  context: BodyContext,
+  depth: number,
+): TableCell {
+  const properties = readCellProperties(node);
+
+  if (properties.verticalAlign !== "top") {
+    context.degradations.note(
+      "table-cell-alignment",
+      `A cell asks to sit at the ${properties.verticalAlign} of its row. LaTeX aligns a whole column rather than one cell, so it is set at the top.`,
+    );
+  }
+
+  return {
+    ...properties,
+    // Filled in once the whole table is read: how far a merge reaches is a
+    // property of the rows under a cell, which the cell itself cannot see.
+    rowSpan: 1,
+    blocks: readBlocks(node.children, context, depth),
+  };
+}
+
+/**
+ * How many rows each vertically merged cell covers.
+ *
+ * Word says only where a merge starts and which cells continue it, so the
+ * extent has to be counted afterwards — and counted by grid column, because a
+ * cell spanning two columns shifts every cell to its right out of step with the
+ * row above.
+ */
+function withRowSpans(rows: readonly TableRow[]): readonly TableRow[] {
+  const columns = rows.map((row) => gridColumnsOf(row));
+
+  const continuesAt = (row: number, column: number): boolean =>
+    (rows[row]?.cells ?? []).some(
+      (cell, index) =>
+        columns[row]?.[index] === column && cell.verticalMerge === "continue",
+    );
+
+  return rows.map((row, index) => ({
+    ...row,
+    cells: row.cells.map((cell, cellIndex) => {
+      if (cell.verticalMerge !== "restart") {
+        return cell;
+      }
+      const column = columns[index]?.[cellIndex] ?? 0;
+
+      let rowSpan = 1;
+      while (continuesAt(index + rowSpan, column)) {
+        rowSpan += 1;
+      }
+      return { ...cell, rowSpan };
+    }),
+  }));
+}
+
+/** The grid column each cell in a row starts at, accounting for its spans. */
+function gridColumnsOf(row: TableRow): readonly number[] {
+  const starts: number[] = [];
+  let column = 0;
+
+  for (const cell of row.cells) {
+    starts.push(column);
+    column += cell.columnSpan;
+  }
+
+  return starts;
 }
 
 /**
@@ -60,13 +305,59 @@ export function countStyleUsage(
   return counts;
 }
 
-function readParagraph(node: SequenceNode): Paragraph {
-  const style = descendSequence(node, "w:pPr", "w:pStyle");
+function readParagraph(node: SequenceNode, context: BodyContext): Paragraph {
+  const properties = findChild(node, "w:pPr");
+  const styleId = attributeOf(findChild(properties, "w:pStyle"), "w:val");
+
+  // `w:pPr/w:rPr` formats the paragraph mark itself, not the runs inside it,
+  // so only the paragraph properties are read here; each run carries its own.
+  const effective = resolveParagraph(context.sheet, styleId, {
+    text: {},
+    paragraph: readParagraphStyle(propertiesOf(properties)),
+  });
 
   return {
-    styleId: attributeOf(style, "w:val"),
-    runs: mergeAdjacent(collectRuns(node.children)),
+    styleId,
+    style: effective.paragraph,
+    runs: mergeAdjacent(collectRuns(node.children, context.sheet, effective)),
+    list: readListMarker(properties, styleId, context),
   };
+}
+
+/**
+ * A paragraph joins a list through `w:numPr`, either directly or through the
+ * style it points at. Word writes the second form for its own List Paragraph
+ * style, so reading only the direct one misses every list in a Word document
+ * that was made with the ribbon button.
+ */
+function readListMarker(
+  properties: SequenceNode | undefined,
+  styleId: string | undefined,
+  { sheet, numbering, degradations }: BodyContext,
+): ListMarker | undefined {
+  const own = findChild(properties, "w:numPr");
+  const inherited = styleId ? sheet.numbering.get(styleId) : undefined;
+
+  const numId =
+    attributeOf(findChild(own, "w:numId"), "w:val") ?? inherited?.numId;
+  if (numId === undefined || numId === "0") {
+    // Word writes numId 0 to take a paragraph back out of a list.
+    return undefined;
+  }
+
+  const level =
+    toInteger(attributeOf(findChild(own, "w:ilvl"), "w:val")) ??
+    inherited?.level ??
+    0;
+
+  const marker = resolveMarker(numbering, numId, level);
+  if (!marker) {
+    degradations.note(
+      "unresolved-list",
+      `A paragraph asks for list ${numId} at level ${level}, which numbering.xml does not define; it is written as an ordinary paragraph.`,
+    );
+  }
+  return marker;
 }
 
 /**
@@ -74,13 +365,17 @@ function readParagraph(node: SequenceNode): Paragraph {
  * `w:smartTag` wrappers. Collecting each container separately would reorder the
  * sentence, so the walk descends through wrappers in place.
  */
-function collectRuns(nodes: readonly SequenceNode[]): readonly TextRun[] {
+function collectRuns(
+  nodes: readonly SequenceNode[],
+  sheet: StyleSheet,
+  paragraph: EffectiveStyle,
+): readonly TextRun[] {
   const runs: TextRun[] = [];
 
   for (const node of nodes) {
     switch (node.name) {
       case "w:r": {
-        const run = readRun(node);
+        const run = readRun(node, sheet, paragraph);
         if (run.text !== "") {
           runs.push(run);
         }
@@ -89,7 +384,8 @@ function collectRuns(nodes: readonly SequenceNode[]): readonly TextRun[] {
       case "w:hyperlink":
       case "w:smartTag":
       case "w:ins":
-        runs.push(...collectRuns(node.children));
+      case "w:moveTo":
+        runs.push(...collectRuns(node.children, sheet, paragraph));
         break;
       default:
         break;
@@ -99,14 +395,28 @@ function collectRuns(nodes: readonly SequenceNode[]): readonly TextRun[] {
   return runs;
 }
 
-function readRun(node: SequenceNode): TextRun {
+function readRun(
+  node: SequenceNode,
+  sheet: StyleSheet,
+  paragraph: EffectiveStyle,
+): TextRun {
   const properties = findChild(node, "w:rPr");
+  const runStyleId = attributeOf(findChild(properties, "w:rStyle"), "w:val");
 
   return {
     text: node.children.map(readRunContent).join(""),
-    bold: readToggle(properties, "w:b"),
-    italic: readToggle(properties, "w:i"),
+    style: resolveRun(
+      sheet,
+      paragraph,
+      runStyleId,
+      readTextStyle(propertiesOf(properties), sheet.theme),
+    ),
   };
+}
+
+/** The property readers work on the unordered view; this is the crossing. */
+function propertiesOf(node: SequenceNode | undefined) {
+  return node ? toXmlNode(node) : undefined;
 }
 
 function readRunContent(node: SequenceNode): string {
@@ -116,6 +426,7 @@ function readRunContent(node: SequenceNode): string {
     case "w:tab":
       return "\t";
     case "w:br":
+      return breakOf(node);
     case "w:cr":
       return "\n";
     case "w:noBreakHyphen":
@@ -126,25 +437,31 @@ function readRunContent(node: SequenceNode): string {
   }
 }
 
-function readToggle(
-  properties: SequenceNode | undefined,
-  name: string,
-): boolean {
-  if (!hasChild(properties, name)) {
-    return false;
+/** An omitted `w:type` means a line break, per the schema default. */
+function breakOf(node: SequenceNode): string {
+  switch (attributeOf(node, "w:type")) {
+    case "page":
+      return PAGE_BREAK;
+    case "column":
+      return COLUMN_BREAK;
+    default:
+      return "\n";
   }
-  return toToggle(attributeOf(findChild(properties, name), "w:val"));
 }
 
 /**
  * Word splits a sentence into separate runs whenever it records an editing
  * session, so identical formatting repeats. Merging keeps the output from
  * reading as `\textbf{Hel}\textbf{lo}`.
+ *
+ * The comparison covers the whole resolved style rather than a chosen few
+ * properties: merging two runs erases the boundary between them for good, so a
+ * property the comparison cannot see is a property silently lost.
  */
 function mergeAdjacent(runs: readonly TextRun[]): readonly TextRun[] {
   return runs.reduce<TextRun[]>((merged, run) => {
     const previous = merged.at(-1);
-    if (previous?.bold === run.bold && previous?.italic === run.italic) {
+    if (previous && sameStyle(previous.style, run.style)) {
       merged[merged.length - 1] = {
         ...previous,
         text: previous.text + run.text,
@@ -154,4 +471,23 @@ function mergeAdjacent(runs: readonly TextRun[]): readonly TextRun[] {
     merged.push(run);
     return merged;
   }, []);
+}
+
+/**
+ * Every property, by name, so a field added to `TextStyle` is compared without
+ * anything here having to be remembered. An absent property and one set to
+ * `undefined` are the same thing, which is why undefined entries are dropped
+ * before the counts are compared.
+ */
+function sameStyle(left: TextStyle, right: TextStyle): boolean {
+  const declared = (style: TextStyle) =>
+    Object.entries(style).filter(([, value]) => value !== undefined);
+
+  const ours = declared(left);
+  const theirs = new Map(declared(right));
+
+  return (
+    ours.length === theirs.size &&
+    ours.every(([name, value]) => theirs.get(name) === value)
+  );
 }

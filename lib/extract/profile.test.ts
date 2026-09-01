@@ -1,7 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
 import { openDocx } from "@/lib/docx/archive";
-import { extractStyleProfile } from "./profile";
+import { extractDocument } from "./profile";
 import type { StyleProfile } from "./types";
 
 const FIXTURE = "exemplo.docx";
@@ -13,7 +13,10 @@ const FIXTURE = "exemplo.docx";
  * not transfer to another fixture.
  */
 async function profile(): Promise<StyleProfile> {
-  return extractStyleProfile(await openDocx(await readFixture(FIXTURE)));
+  const { profile } = await extractDocument(
+    await openDocx(await readFixture(FIXTURE)),
+  );
+  return profile;
 }
 
 const describeFixture = describe.skipIf(!hasFixture(FIXTURE));

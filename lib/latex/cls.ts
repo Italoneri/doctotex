@@ -1,4 +1,5 @@
 import { bibliographySetup } from "./bib";
+import { fontSize, mm, prefixed, pt, trim, TEX_LEADING_RATIO } from "./format";
 import {
   FONTSPEC_SETTER,
   isSubstitution,
@@ -6,13 +7,17 @@ import {
   type FontMapping,
   type LatexFamily,
 } from "./fonts";
+import { listPreamble } from "./list";
+import { tableNeedsOf, tablePreamble, type TableNeeds } from "./table";
 import {
   DEFAULT_OPTIONS,
   usesFontspec,
   type Engine,
   type GenerationOptions,
 } from "./options";
+import { paragraphsOf, type Block, type Paragraph } from "@/lib/extract/body";
 import type {
+  Alignment,
   EffectiveStyle,
   HeadingStyle,
   LineSpacing,
@@ -59,9 +64,68 @@ export type StyleUsage = ReadonlyMap<string, number>;
 
 export interface ClassInput {
   readonly profile: StyleProfile;
+  /**
+   * What the document says, not only how it declares itself. A face used by a
+   * hand-formatted run appears nowhere in the stylesheet, and a class that
+   * loaded only the declared faces would render that run in the wrong one.
+   */
+  readonly blocks?: readonly Block[];
   readonly headerFooter?: HeaderFooterText;
   readonly usage?: StyleUsage;
   readonly options?: GenerationOptions;
+}
+
+/**
+ * Packages the class loads only because the document uses what they provide.
+ *
+ * A preamble that loads everything compiles the same and reads as though the
+ * document needed it, which is the opposite of what the comments are for.
+ */
+interface Needs {
+  readonly strikeOrUnderline: boolean;
+  readonly justifiedParagraphs: boolean;
+  readonly shapedParagraphs: boolean;
+  readonly lists: boolean;
+  readonly tables: TableNeeds;
+}
+
+function needsOf(profile: StyleProfile, blocks: readonly Block[]): Needs {
+  const bodyAlignment = profile.defaults.paragraph.alignment ?? "left";
+  const paragraphs = paragraphsOf(blocks);
+
+  return {
+    strikeOrUnderline: paragraphs.some((paragraph) =>
+      paragraph.runs.some((run) => run.style.underline || run.style.strike),
+    ),
+    // Only worth a package where the document mixes the two: a wholly
+    // justified document gets justification from LaTeX for nothing.
+    justifiedParagraphs:
+      bodyAlignment !== "justify" &&
+      paragraphs.some((p) => p.style.alignment === "justify"),
+    shapedParagraphs: paragraphs.some((p) => isShaped(p, profile)),
+    // Driven by what the paragraphs resolved to, not by the presence of
+    // numbering.xml: Word ships that part in documents that have no list.
+    lists: paragraphs.some((p) => p.list !== undefined),
+    tables: tableNeedsOf(blocks),
+  };
+}
+
+/**
+ * Whether a paragraph asks for anything the document-wide settings do not
+ * already give it. One that does not is written as plain text, which keeps the
+ * generated document readable and its diffs small.
+ */
+export function isShaped(paragraph: Paragraph, profile: StyleProfile): boolean {
+  const body = profile.defaults.paragraph;
+  const own = paragraph.style;
+
+  return (
+    (own.spaceBeforePt ?? 0) !== (body.spaceBeforePt ?? 0) ||
+    (own.spaceAfterPt ?? 0) !== (body.spaceAfterPt ?? 0) ||
+    (own.indentLeftMm ?? 0) !== (body.indentLeftMm ?? 0) ||
+    (own.indentFirstLineMm ?? 0) !== (body.indentFirstLineMm ?? 0) ||
+    (own.alignment ?? "left") !== (body.alignment ?? "left")
+  );
 }
 
 export function generateClass(input: ClassInput): string {
@@ -88,17 +152,24 @@ export function generateClass(input: ClassInput): string {
 export function preambleLines(input: ClassInput): readonly string[] {
   const { profile } = input;
   const options = input.options ?? DEFAULT_OPTIONS;
+  const blocks = input.blocks ?? [];
+  const paragraphs = paragraphsOf(blocks);
+  const needs = needsOf(profile, blocks);
 
   const bodySizePt = profile.defaults.text.fontSizePt ?? DEFAULT_BODY_SIZE_PT;
   const bodyFamily = mapFont(profile.defaults.text.fontFamily).family;
   const bibliography = bibliographySetup(options.bibliography);
 
   return [
-    ...fontSetup(profile, bodySizePt, options.engine),
+    ...fontSetup(profile, paragraphs, bodySizePt, options.engine),
+    ...prefixed(inlineDecorations(needs)),
+    ...prefixed(needs.lists ? listPreamble() : []),
+    ...prefixed(tablePreamble(needs.tables)),
     "",
     ...geometry(profile),
     "",
-    ...spacing(profile),
+    ...spacing(profile, bodySizePt, needs),
+    ...prefixed(paragraphEnvironment(needs)),
     "",
     ...headings(profile, bodySizePt, bodyFamily, input.usage ?? new Map()),
     "",
@@ -110,15 +181,37 @@ export function preambleLines(input: ClassInput): readonly string[] {
 }
 
 /**
+ * `\underline` cannot break across lines and `ulem` has no plain-LaTeX
+ * equivalent, so the package is loaded — but `normalem` is not optional:
+ * without it `ulem` redefines `\emph` to underline, and every italic in the
+ * document would come out underlined instead.
+ */
+function inlineDecorations(needs: Needs): readonly string[] {
+  if (!needs.strikeOrUnderline) {
+    return [];
+  }
+  return [
+    "%% The document underlines or strikes text through.",
+    "\\RequirePackage[normalem]{ulem}",
+  ];
+}
+
+/**
  * Every distinct typeface the document uses, so a heading in Arial over a body
  * in Times still reaches the reader in Arial. Loading only the body font would
  * silently render every style in it.
  */
-function fontPlan(profile: StyleProfile): ReadonlyMap<string, FontMapping> {
+function fontPlan(
+  profile: StyleProfile,
+  paragraphs: readonly Paragraph[],
+): ReadonlyMap<string, FontMapping> {
   const families = [
     profile.defaults.text.fontFamily,
     ...profile.headings.map((heading) => heading.text.fontFamily),
     profile.title?.text.fontFamily,
+    ...paragraphs.flatMap((paragraph) =>
+      paragraph.runs.map((run) => run.style.fontFamily),
+    ),
   ];
 
   const plan = new Map<string, FontMapping>();
@@ -133,10 +226,11 @@ function fontPlan(profile: StyleProfile): ReadonlyMap<string, FontMapping> {
 
 function fontSetup(
   profile: StyleProfile,
+  paragraphs: readonly Paragraph[],
   bodySizePt: number,
   engine: Engine,
 ): readonly string[] {
-  const plan = fontPlan(profile);
+  const plan = fontPlan(profile, paragraphs);
   const bodyFamily = mapFont(profile.defaults.text.fontFamily).family;
 
   const lines = usesFontspec(engine)
@@ -282,13 +376,31 @@ function geometry(profile: StyleProfile): readonly string[] {
   ];
 }
 
-function spacing(profile: StyleProfile): readonly string[] {
-  const lines = ["\\RequirePackage{setspace}", "\\RequirePackage{xcolor}"];
+function spacing(
+  profile: StyleProfile,
+  bodySizePt: number,
+  needs: Needs,
+): readonly string[] {
+  // `\cellcolor` comes from xcolor's table option, and an option cannot be
+  // added to a package that is already loaded, so the decision is made here
+  // rather than beside the tables that need it.
+  const xcolor = needs.tables.cellColours
+    ? "\\RequirePackage[table]{xcolor}  % table: the document shades table cells"
+    : "\\RequirePackage{xcolor}";
+  const lines = ["\\RequirePackage{setspace}", xcolor];
 
-  const stretch = stretchFor(profile.defaults.paragraph.lineSpacing);
-  if (stretch !== undefined) {
-    lines.push(`\\setstretch{${stretch}}`);
+  if (needs.justifiedParagraphs) {
+    lines.push(
+      "%% Some paragraphs justify while the document does not, so both shapes",
+      "%% have to be available rather than one being the absence of the other.",
+      "\\RequirePackage{ragged2e}",
+    );
   }
+
+  lines.push(
+    ...lineSpacing(profile.defaults.paragraph.lineSpacing, bodySizePt),
+    ...bodyAlignment(profile.defaults.paragraph.alignment),
+  );
 
   const { spaceBeforePt, spaceAfterPt, indentFirstLineMm } =
     profile.defaults.paragraph;
@@ -297,12 +409,113 @@ function spacing(profile: StyleProfile): readonly string[] {
   // an undeclared paragraph spacing are zero, while LaTeX's are a 15pt indent
   // and a springy parskip — leaving them alone would indent every paragraph of
   // a document that asked for none.
+  //
+  // Word puts the space after one paragraph and the space before the next
+  // between them and adds the two; LaTeX has the one \parskip for that gap.
   lines.push(
-    `\\setlength{\\parskip}{${pt(spaceAfterPt ?? spaceBeforePt ?? 0)}}`,
+    `\\setlength{\\parskip}{${pt((spaceBeforePt ?? 0) + (spaceAfterPt ?? 0))}}`,
     `\\setlength{\\parindent}{${mm(indentFirstLineMm ?? 0)}}`,
   );
 
   return lines;
+}
+
+/**
+ * `w:lineRule` says what `w:line` measures, and setspace expresses all three
+ * as a factor of TeX's own leading. Reporting only the `auto` case, as this
+ * used to, dropped an exactly-specified leading without saying so.
+ */
+function lineSpacing(
+  spacing: LineSpacing | undefined,
+  bodySizePt: number,
+): readonly string[] {
+  if (!spacing) {
+    return [];
+  }
+
+  // TeX sets its baselines 1.2 times the type size apart, which is the figure
+  // an absolute request has to be expressed against.
+  const natural = bodySizePt * TEX_LEADING_RATIO;
+
+  switch (spacing.kind) {
+    case "multiple":
+      return [`\\setstretch{${trim(spacing.value)}}`];
+    case "exact":
+      return [
+        `%% The document asks for exactly ${trim(spacing.pt)}pt between baselines,`,
+        `%% which is ${trim(spacing.pt / natural)} times TeX's own ${trim(natural)}pt.`,
+        `\\setstretch{${trim(spacing.pt / natural)}}`,
+      ];
+    case "atLeast":
+      // Below TeX's own leading the request is already met, so the floor never
+      // tightens the page — it only ever opens it up.
+      return [
+        `%% The document asks for at least ${trim(spacing.pt)}pt between baselines;`,
+        `%% TeX's own ${trim(natural)}pt already meets that where the factor would be under 1.`,
+        `\\setstretch{${trim(Math.max(1, spacing.pt / natural))}}`,
+      ];
+  }
+}
+
+/**
+ * The shape every paragraph starts in.
+ *
+ * ECMA-376 gives `w:jc` a default of `start`, so a document that never mentions
+ * alignment is asking for ragged right — where LaTeX, left alone, justifies.
+ * That difference is also most of why generated pages overflowed the margin:
+ * justification stretches a line it cannot hyphenate, and ragged right does not.
+ */
+function bodyAlignment(alignment: Alignment | undefined): readonly string[] {
+  if (alignment === undefined) {
+    return [
+      "%% The document declares no alignment, so the schema default of",
+      '%% "start" applies, which is ragged right rather than justified.',
+      "\\raggedright",
+    ];
+  }
+
+  switch (alignment) {
+    case "left":
+      return ["\\raggedright"];
+    case "right":
+      return ["\\raggedleft"];
+    case "center":
+      return ["\\centering"];
+    case "justify":
+      // LaTeX's own shape; saying so beats a line that changes nothing.
+      return ["%% The document justifies, which is what LaTeX already does."];
+  }
+}
+
+/**
+ * One paragraph that asks for spacing, indentation or alignment the document
+ * as a whole does not. The arguments are always written in the same order so
+ * the generated document can be read down a column.
+ */
+function paragraphEnvironment(needs: Needs): readonly string[] {
+  if (!needs.shapedParagraphs) {
+    return [];
+  }
+
+  return [
+    "%% A paragraph whose own w:pPr differs from the document's defaults.",
+    "%% #1 space before, #2 space after, #3 left indent, #4 first-line indent,",
+    "%% #5 the alignment switch, empty where it matches the document's.",
+    "%%",
+    "%% The closing half of an environment cannot see its arguments, so the",
+    "%% space that follows the paragraph is held in a length until it is due.",
+    "%% \\begin already opens a group, which is what confines the rest.",
+    "\\newlength{\\doctotexafter}",
+    "\\newenvironment{doctotexpara}[5]{%",
+    "  \\par\\vspace{#1}%",
+    "  \\setlength{\\doctotexafter}{#2}%",
+    "  \\setlength{\\leftskip}{#3}%",
+    "  \\setlength{\\parindent}{#4}%",
+    "  #5%",
+    "}{%",
+    "  \\par\\vspace{\\doctotexafter}%",
+    "}",
+  ];
 }
 
 function headings(
@@ -458,36 +671,6 @@ function pageStyle(headerFooter: HeaderFooterText): readonly string[] {
   return lines;
 }
 
-/** A blank line before a section, but no blank line where there is no section. */
-function prefixed(lines: readonly string[]): readonly string[] {
-  return lines.length === 0 ? [] : ["", ...lines];
-}
-
-/** Word's line rule maps onto setspace's stretch factor only when it is auto. */
-function stretchFor(spacing: LineSpacing | undefined): number | undefined {
-  if (spacing?.kind !== "multiple") {
-    return undefined;
-  }
-  return spacing.value;
-}
-
-function fontSize(sizePt: number): string {
-  // 1.2 is TeX's own ratio of baseline to size.
-  return `\\fontsize{${trim(sizePt)}pt}{${trim(sizePt * 1.2)}pt}\\selectfont`;
-}
-
 function separation(valueMm: number): number {
   return Math.max(MIN_SEPARATION_MM, valueMm);
-}
-
-function mm(value: number): string {
-  return `${trim(value)}mm`;
-}
-
-function pt(value: number): string {
-  return `${trim(value)}pt`;
-}
-
-function trim(value: number): string {
-  return String(Math.round(value * 100) / 100);
 }

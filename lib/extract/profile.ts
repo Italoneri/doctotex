@@ -1,6 +1,9 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
+import { extractBlocks, type Block } from "./body";
+import { parseNumbering } from "./numbering";
 import { extractPage } from "./page";
+import { collectDegradations, type ConversionReport } from "./report";
 import { extractTheme } from "./theme";
 import {
   findHeadingStyles,
@@ -12,6 +15,7 @@ import type { DocumentFeatures, StyleProfile } from "./types";
 
 const MAIN_DOCUMENT = "word/document.xml";
 const STYLES = "word/styles.xml";
+const NUMBERING = "word/numbering.xml";
 
 /** Word numbers theme parts, and a few generators emit `theme.xml` unnumbered. */
 const THEME_PATTERN = /^word\/theme\/theme\d*\.xml$/;
@@ -19,26 +23,55 @@ const THEME_PATTERN = /^word\/theme\/theme\d*\.xml$/;
 /** Word's built-in style ID for body text, before any localisation. */
 const NORMAL_STYLE_ID = "Normal";
 
-export async function extractStyleProfile(
+/** What one `.docx` yields: how it looks, what it says, and what was lost. */
+export interface ExtractedDocument {
+  readonly profile: StyleProfile;
+  readonly blocks: readonly Block[];
+  readonly report: ConversionReport;
+}
+
+/**
+ * The two halves are extracted together because the second needs the first: a
+ * paragraph's own formatting is the last level of the same cascade the
+ * stylesheet begins, so resolving it needs the stylesheet in hand. Reading the
+ * parts separately also decompressed the largest one twice.
+ */
+export async function extractDocument(
   archive: DocxArchive,
-): Promise<StyleProfile> {
+): Promise<ExtractedDocument> {
   const documentXml = await readTextPart(archive, MAIN_DOCUMENT);
   if (!documentXml) {
     throw new DocxFormatError(`${MAIN_DOCUMENT} could not be read.`);
   }
 
+  const degradations = collectDegradations();
   const theme = extractTheme(await readThemePart(archive));
   const sheet = parseStyleSheet(await readTextPart(archive, STYLES), theme);
+  const numbering = parseNumbering(
+    await readTextPart(archive, NUMBERING),
+    degradations,
+  );
+
+  const blocks = extractBlocks(documentXml, {
+    sheet,
+    numbering,
+    degradations,
+  });
 
   return {
-    page: extractPage(documentXml),
-    // Body text is the Normal style resolved against docDefaults, which is what
-    // an unstyled paragraph actually renders as.
-    defaults: resolveStyle(sheet, normalStyleId(sheet)),
-    headings: findHeadingStyles(sheet),
-    title: findTitleStyle(sheet),
-    theme,
-    features: detectFeatures(archive, documentXml),
+    profile: {
+      page: extractPage(documentXml),
+      // Body text is the Normal style resolved against docDefaults, which is
+      // what an unstyled paragraph actually renders as.
+      defaults: resolveStyle(sheet, normalStyleId(sheet)),
+      headings: findHeadingStyles(sheet),
+      title: findTitleStyle(sheet),
+      theme,
+      features: detectFeatures(archive, documentXml),
+    },
+    blocks,
+    // Read after the walk: the collector is filled by it.
+    report: degradations.report(),
   };
 }
 

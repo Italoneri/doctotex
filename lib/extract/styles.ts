@@ -26,6 +26,7 @@ import type {
   ParagraphStyle,
   TextStyle,
   ThemeFonts,
+  VerticalAlign,
 } from "./types";
 
 /**
@@ -39,17 +40,48 @@ const TITLE_NAME = "title";
 
 const EMPTY_STYLE: EffectiveStyle = { text: {}, paragraph: {} };
 
+/** `w:u` is a value, not a toggle: every other value is a kind of underline. */
+const NO_UNDERLINE = "none";
+
+const VERTICAL_ALIGNS: Readonly<Record<string, VerticalAlign>> = {
+  baseline: "baseline",
+  superscript: "superscript",
+  subscript: "subscript",
+};
+
+/** A `w:numPr` declared by a style rather than by the paragraph itself. */
+export interface StyleNumbering {
+  readonly numId?: string;
+  readonly level?: number;
+}
+
 export interface StyleDefinition {
   readonly styleId: string;
   /** Canonical name, lowercased: "heading 1", "title", "body text indent". */
   readonly name: string;
   readonly basedOn?: string;
   readonly style: EffectiveStyle;
+  /** Only what this style declares; the chain is resolved in `StyleSheet`. */
+  readonly numbering?: StyleNumbering;
 }
 
 export interface StyleSheet {
   readonly docDefaults: EffectiveStyle;
   readonly definitions: ReadonlyMap<string, StyleDefinition>;
+  /**
+   * Carried here because direct formatting can name a theme font too, and the
+   * body walker would otherwise need the theme threaded alongside the sheet
+   * everywhere the sheet already goes.
+   */
+  readonly theme: ThemeFonts;
+  /**
+   * Which list a style puts its paragraphs in, resolved through `basedOn`.
+   *
+   * Word's ribbon writes the list onto the paragraph, but its own numbered
+   * heading styles and many templates declare it on the style instead, and a
+   * reader that looks only at `w:pPr/w:numPr` sees no list at all in those.
+   */
+  readonly numbering: ReadonlyMap<string, StyleNumbering>;
 }
 
 export function parseStyleSheet(
@@ -57,7 +89,12 @@ export function parseStyleSheet(
   theme: ThemeFonts,
 ): StyleSheet {
   if (!stylesXml) {
-    return { docDefaults: EMPTY_STYLE, definitions: new Map() };
+    return {
+      docDefaults: EMPTY_STYLE,
+      definitions: new Map(),
+      theme,
+      numbering: new Map(),
+    };
   }
 
   const root = child(parseXml(stylesXml), "w:styles");
@@ -77,7 +114,52 @@ export function parseStyleSheet(
       paragraph: readParagraphStyle(descend(defaults, "w:pPrDefault", "w:pPr")),
     },
     definitions,
+    theme,
+    numbering: resolveStyleNumbering(definitions),
   };
+}
+
+/**
+ * Each style's list membership, with `basedOn` already followed.
+ *
+ * Resolved once here rather than per paragraph: a body of two thousand list
+ * items would otherwise walk the same chains two thousand times.
+ */
+function resolveStyleNumbering(
+  definitions: ReadonlyMap<string, StyleDefinition>,
+): ReadonlyMap<string, StyleNumbering> {
+  const resolved = new Map<string, StyleNumbering>();
+
+  for (const styleId of definitions.keys()) {
+    const found = inheritedNumbering(definitions, styleId);
+    if (found) {
+      resolved.set(styleId, found);
+    }
+  }
+
+  return resolved;
+}
+
+function inheritedNumbering(
+  definitions: ReadonlyMap<string, StyleDefinition>,
+  styleId: string,
+): StyleNumbering | undefined {
+  const seen = new Set<string>();
+
+  let current: string | undefined = styleId;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const definition: StyleDefinition | undefined = definitions.get(current);
+    if (!definition) {
+      return undefined;
+    }
+    if (definition.numbering?.numId !== undefined) {
+      return definition.numbering;
+    }
+    current = definition.basedOn;
+  }
+
+  return undefined;
 }
 
 /**
@@ -90,6 +172,44 @@ export function resolveStyle(
   styleId: string | undefined,
 ): EffectiveStyle {
   return chainFor(sheet, styleId).reduce(mergeStyles, sheet.docDefaults);
+}
+
+/**
+ * The paragraph's own `w:pPr` is the last level of the cascade, and the one
+ * Word writes most: a document can carry a full stylesheet and still apply
+ * every visible heading by hand, in which case the style chain says nothing
+ * about how the page looks.
+ */
+export function resolveParagraph(
+  sheet: StyleSheet,
+  styleId: string | undefined,
+  direct: EffectiveStyle,
+): EffectiveStyle {
+  return mergeStyles(resolveStyle(sheet, styleId), direct);
+}
+
+/**
+ * A run resolves against the paragraph it sits in, then its own character
+ * style, then its own `w:rPr`. Starting from the paragraph rather than from
+ * docDefaults is what makes `<w:b w:val="0"/>` inside a bold style un-bold
+ * rather than read as an absent property.
+ */
+export function resolveRun(
+  sheet: StyleSheet,
+  paragraph: EffectiveStyle,
+  runStyleId: string | undefined,
+  direct: TextStyle,
+): TextStyle {
+  const character = chainFor(sheet, runStyleId).reduce(
+    mergeStyles,
+    EMPTY_STYLE,
+  );
+
+  return {
+    ...paragraph.text,
+    ...defined(character.text),
+    ...defined(direct),
+  };
 }
 
 /** Root-first list of styles to apply, with `basedOn` cycles broken. */
@@ -153,6 +273,8 @@ function readDefinition(
     return undefined;
   }
 
+  const numPr = child(child(node, "w:pPr"), "w:numPr");
+
   return {
     styleId,
     name: (attribute(child(node, "w:name"), "w:val") ?? "").toLowerCase(),
@@ -161,27 +283,70 @@ function readDefinition(
       text: readTextStyle(child(node, "w:rPr"), theme),
       paragraph: readParagraphStyle(child(node, "w:pPr")),
     },
+    numbering: numPr && {
+      numId: attribute(child(numPr, "w:numId"), "w:val"),
+      level: toInteger(attribute(child(numPr, "w:ilvl"), "w:val")),
+    },
   };
 }
 
-function readTextStyle(rPr: XmlNode | undefined, theme: ThemeFonts): TextStyle {
+/**
+ * One `w:rPr`, whether it belongs to a style or to a run in the body. Direct
+ * formatting is the last level of the same cascade, so it is read by the same
+ * function rather than by a parallel one that could disagree with it.
+ */
+export function readTextStyle(
+  rPr: XmlNode | undefined,
+  theme: ThemeFonts,
+): TextStyle {
   const fonts = child(rPr, "w:rFonts");
   const halfPoints = toInteger(attribute(child(rPr, "w:sz"), "w:val"));
 
   return {
+    // w:ascii covers the Latin range and w:hAnsi everything above it. Word
+    // writes both; Google Docs exports often write only w:hAnsi, and reading
+    // w:ascii alone reports those documents as having no font at all.
     fontFamily:
       attribute(fonts, "w:ascii") ??
-      resolveThemeFont(theme, attribute(fonts, "w:asciiTheme")),
+      attribute(fonts, "w:hAnsi") ??
+      resolveThemeFont(theme, attribute(fonts, "w:asciiTheme")) ??
+      resolveThemeFont(theme, attribute(fonts, "w:hAnsiTheme")),
     fontSizePt:
       halfPoints === undefined ? undefined : halfPointsToPt(halfPoints),
     bold: readToggle(rPr, "w:b"),
     italic: readToggle(rPr, "w:i"),
+    underline: readUnderline(rPr),
+    // A single and a double strike differ only in how they are drawn, and
+    // LaTeX draws one line either way.
+    strike: readToggle(rPr, "w:strike") ?? readToggle(rPr, "w:dstrike"),
     allCaps: readToggle(rPr, "w:caps"),
+    smallCaps: readToggle(rPr, "w:smallCaps"),
+    script: readVerticalAlign(rPr),
     colorHex: toColorHex(attribute(child(rPr, "w:color"), "w:val")),
   };
 }
 
-function readParagraphStyle(pPr: XmlNode | undefined): ParagraphStyle {
+/**
+ * Unlike `w:b`, `w:u` carries which underline to draw. Anything but `none` is
+ * one, so an unknown kind still underlines rather than silently vanishing.
+ */
+function readUnderline(rPr: XmlNode | undefined): boolean | undefined {
+  const { present, val } = value(rPr, "w:u");
+  if (!present) {
+    return undefined;
+  }
+  return (val ?? "").toLowerCase() !== NO_UNDERLINE;
+}
+
+function readVerticalAlign(
+  rPr: XmlNode | undefined,
+): VerticalAlign | undefined {
+  const raw = attribute(child(rPr, "w:vertAlign"), "w:val");
+  return raw === undefined ? undefined : VERTICAL_ALIGNS[raw.toLowerCase()];
+}
+
+/** One `w:pPr`, from a style definition or from a paragraph in the body. */
+export function readParagraphStyle(pPr: XmlNode | undefined): ParagraphStyle {
   const spacing = child(pPr, "w:spacing");
   const indent = child(pPr, "w:ind");
 

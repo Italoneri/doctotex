@@ -1,5 +1,6 @@
 import JSZip from "jszip";
-import { countStyleUsage, type Paragraph } from "@/lib/extract/body";
+import { countStyleUsage, paragraphsOf, type Block } from "@/lib/extract/body";
+import type { ConversionReport } from "@/lib/extract/report";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE, bibliographyStub } from "./bib";
 import { CLASS_NAME, generateClass, type HeaderFooterText } from "./cls";
@@ -17,18 +18,22 @@ export type SourceFiles = ReadonlyMap<string, string>;
 
 export interface GenerateInput {
   readonly profile: StyleProfile;
-  readonly paragraphs: readonly Paragraph[];
+  readonly blocks: readonly Block[];
   readonly headerFooter?: HeaderFooterText;
   readonly options?: GenerationOptions;
+  /** What the extraction had to change, written into the generated document. */
+  readonly report?: ConversionReport;
 }
 
 export function generateSources(input: GenerateInput): SourceFiles {
   const options = input.options ?? DEFAULT_OPTIONS;
   const shared = {
     profile: input.profile,
+    blocks: input.blocks,
     headerFooter: input.headerFooter,
-    usage: countStyleUsage(input.paragraphs),
+    usage: countStyleUsage(paragraphsOf(input.blocks)),
     options,
+    report: input.report,
   };
 
   const sources = new Map<string, string>();
@@ -38,10 +43,7 @@ export function generateSources(input: GenerateInput): SourceFiles {
   if (options.layout === "multi") {
     sources.set(CLASS_FILE, generateClass(shared));
   }
-  sources.set(
-    MAIN_FILE,
-    generateDocument({ ...shared, paragraphs: input.paragraphs }),
-  );
+  sources.set(MAIN_FILE, generateDocument(shared));
 
   // A `\bibliography` pointing at a file that is not in the archive is a
   // compile error on the reader's machine, not a missing extra.

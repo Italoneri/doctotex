@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { listsNested, tableMerged } from "@/fixtures/documents";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
-import { openDocx, readTextPart } from "@/lib/docx/archive";
-import { extractParagraphs, type Paragraph } from "@/lib/extract/body";
-import { extractStyleProfile } from "@/lib/extract/profile";
+import { openDocx } from "@/lib/docx/archive";
+import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
+import { extractDocument } from "@/lib/extract/profile";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE } from "./bib";
 import { CLASS_FILE, generateSources, type SourceFiles } from "./bundle";
@@ -12,6 +13,7 @@ import {
   DEFAULT_OPTIONS,
   ENGINES,
   type Bibliography,
+  type Engine,
   type GenerationOptions,
   type Layout,
 } from "./options";
@@ -32,12 +34,8 @@ const MATRIX_TIMEOUT = { timeout: 600_000 };
 
 async function sourcesFromFixture(): Promise<SourceFiles> {
   const archive = await openDocx(await readFixture(FIXTURE));
-  const documentXml = (await readTextPart(archive, "word/document.xml")) ?? "";
 
-  return generateSources({
-    profile: await extractStyleProfile(archive),
-    paragraphs: extractParagraphs(documentXml),
-  });
+  return generateSources(await extractDocument(archive));
 }
 
 describeCompiling("generated sources", () => {
@@ -116,22 +114,52 @@ const PROFILE: StyleProfile = {
   },
 };
 
+/**
+ * The body carries one of every construct the generator can emit, because the
+ * only thing that settles whether `\uline` inside `\textcolor` inside a shaped
+ * paragraph is valid LaTeX is TeX.
+ */
 const PARAGRAPHS: readonly Paragraph[] = [
-  { styleId: "Title", runs: [text("A Generated Template")] },
-  { styleId: "Heading1", runs: [text("Introduction")] },
+  { styleId: "Title", style: {}, runs: [text("A Generated Template")] },
+  { styleId: "Heading1", style: {}, runs: [text("Introduction")] },
   {
+    style: {},
     runs: [
       text("Body text with "),
-      { text: "bold", bold: true, italic: false },
+      { text: "bold", style: { bold: true } },
       text(" and reserved characters: 50% of A&B costs $3_00 #1 {x} ~y ^z."),
     ],
   },
-  { styleId: "Heading2", runs: [text("Method")] },
-  { runs: [text("A second paragraph, to give the page something to break.")] },
+  {
+    style: { alignment: "center", spaceBeforePt: 12, spaceAfterPt: 6 },
+    runs: [
+      {
+        text: "Centred, coloured, underlined",
+        style: { colorHex: "#2E74B5", underline: true, fontSizePt: 14 },
+      },
+    ],
+  },
+  {
+    style: { alignment: "justify", indentLeftMm: 10, indentFirstLineMm: 5 },
+    runs: [
+      { text: "Struck through", style: { strike: true } },
+      text(", small caps "),
+      { text: "here", style: { smallCaps: true } },
+      text(", a footnote mark"),
+      { text: "1", style: { script: "superscript" } },
+      text(", and a line break."),
+      { text: "\nAfter the break, in Arial.", style: { fontFamily: "Arial" } },
+    ],
+  },
+  { styleId: "Heading2", style: {}, runs: [text("Method")] },
+  {
+    style: { pageBreakBefore: true },
+    runs: [text("A second paragraph, on a page of its own.")],
+  },
 ];
 
 function text(value: string): Paragraph["runs"][number] {
-  return { text: value, bold: false, italic: false };
+  return { text: value, style: {} };
 }
 
 function sourcesFor(overrides: Partial<GenerationOptions>): {
@@ -143,7 +171,7 @@ function sourcesFor(overrides: Partial<GenerationOptions>): {
     options,
     sources: generateSources({
       profile: PROFILE,
-      paragraphs: PARAGRAPHS,
+      blocks: paragraphBlocks(PARAGRAPHS),
       options,
     }),
   };
@@ -331,3 +359,157 @@ function describe_(result: CompileResult): string {
     ? result.reason
     : result.log.slice(-5000);
 }
+
+/**
+ * Documents built rather than uploaded, one per feature.
+ *
+ * The matrix above proves the options produce valid LaTeX over a profile with
+ * nothing structural in it. These prove the structural readers do — a list, a
+ * table and an image are where a generator emits something that looks like
+ * LaTeX and is not, and only the engine can say which. They build their own
+ * `.docx`, so they run on a checkout that has no fixture on disk.
+ */
+const FEATURE_DOCUMENTS = [
+  ["a three-level nested list", listsNested],
+  ["a table with merged cells", tableMerged],
+] as const;
+
+/**
+ * pdfLaTeX and XeLaTeX select fonts by entirely different machinery, which is
+ * what makes them the pair worth running every time. LuaLaTeX joins the full
+ * matrix rather than the default one.
+ */
+const FEATURE_ENGINES: readonly Engine[] = exhaustive
+  ? ENGINES
+  : ["pdflatex", "xelatex"];
+
+async function expectDocumentCompiles(
+  build: () => Promise<Uint8Array>,
+  engine: Engine,
+): Promise<void> {
+  const sources = await sourcesFromDocument(build, engine);
+  const result = await compile(sources, MAIN_FILE, { engine });
+
+  if (result.kind !== "compiled") {
+    throw new Error(`${engine} failed:\n${describe_(result)}`);
+  }
+  expect(result.pdf.length).toBeGreaterThan(1000);
+}
+
+async function sourcesFromDocument(
+  build: () => Promise<Uint8Array>,
+  engine: Engine = "pdflatex",
+): Promise<SourceFiles> {
+  const archive = await openDocx(await build());
+  const extracted = await extractDocument(archive);
+
+  return generateSources({
+    ...extracted,
+    options: { ...DEFAULT_OPTIONS, engine },
+  });
+}
+
+describe.skipIf(!dockerUp)("a document with structure", () => {
+  it.each(
+    FEATURE_DOCUMENTS.flatMap(([name, build]) =>
+      FEATURE_ENGINES.map(
+        (engine) =>
+          [`${name} compiles under ${engine}`, build, engine] as const,
+      ),
+    ),
+  )("%s", MATRIX_TIMEOUT, async (_name, build, engine) => {
+    await expectDocumentCompiles(build, engine);
+  });
+});
+
+// Needs no daemon: what the generator emitted is readable without running it.
+describe("a document with lists", () => {
+  it("nests the levels the document nests", async () => {
+    const sources = await sourcesFromDocument(listsNested);
+    const main = sources.get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("\\begin{enumerate}");
+    expect(main).toContain("\\begin{itemize}");
+    // Three levels open before the deepest item, and all three close again.
+    expect(count(main, "\\begin{enumerate}")).toBe(
+      count(main, "\\end{enumerate}"),
+    );
+    expect(count(main, "\\begin{itemize}")).toBe(count(main, "\\end{itemize}"));
+  });
+
+  it("resumes a list an ordinary paragraph interrupted", async () => {
+    const main = (await sourcesFromDocument(listsNested)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("resume");
+  });
+
+  it("carries the level formats out of numbering.xml", async () => {
+    const main = (await sourcesFromDocument(listsNested)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("label=\\arabic*.");
+    expect(main).toContain("label=\\alph*)");
+    expect(main).toContain("\\roman*");
+  });
+
+  it("loads enumitem in the class only because the document has lists", async () => {
+    const withLists = await sourcesFromDocument(listsNested);
+
+    expect(withLists.get(CLASS_FILE)).toContain("\\RequirePackage{enumitem}");
+    expect(sourcesFor({}).sources.get(CLASS_FILE)).not.toContain("enumitem");
+  });
+});
+
+function count(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
+
+// Needs no daemon: what the generator emitted is readable without running it.
+describe("a document with tables", () => {
+  it("carries the grid, the merges and the shading", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("multicolumn{2}");
+    expect(main).toContain("multirow{2}");
+    expect(main).toContain("cellcolor[HTML]{D9E2F3}");
+  });
+
+  it("repeats a header row across the pages a long table crosses", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(main).toContain("begin{xltabular}");
+    expect(main).toContain("endhead");
+  });
+
+  it("opens and closes every table it begins", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(count(main, "begin{xltabular}")).toBe(count(main, "end{xltabular}"));
+  });
+
+  it("loads the table packages only for a document that has tables", async () => {
+    const withTables = await sourcesFromDocument(tableMerged);
+
+    expect(withTables.get(CLASS_FILE)).toContain("RequirePackage{tabularx}");
+    expect(withTables.get(CLASS_FILE)).toContain("RequirePackage{multirow}");
+    expect(sourcesFor({}).sources.get(CLASS_FILE)).not.toContain("tabularx");
+  });
+
+  // \cellcolor comes from xcolor's table option, and an option cannot be added
+  // to a package that is already loaded.
+  it("loads xcolor with its table option where cells are shaded", async () => {
+    const withTables = await sourcesFromDocument(tableMerged);
+
+    expect(withTables.get(CLASS_FILE)).toContain(
+      "RequirePackage[table]{xcolor}",
+    );
+    expect(sourcesFor({}).sources.get(CLASS_FILE)).toContain(
+      "RequirePackage{xcolor}",
+    );
+  });
+
+  it("no longer says tables are missing from the template", async () => {
+    const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
+
+    expect(main).not.toContain("%% TODO: the source document contains");
+  });
+});

@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import type { XmlNode } from "./xml";
 
 /**
  * A second view of the same XML, ordered.
@@ -127,6 +128,57 @@ export function textOf(node: SequenceNode | undefined): string {
     return node.text ?? "";
   }
   return node.children.map(textOf).join("");
+}
+
+/**
+ * The same element in the shape `xml.ts` reads.
+ *
+ * A property subtree — `w:pPr`, `w:rPr` — is addressed by name and its order
+ * carries nothing, so converting one lets the readers in `styles.ts` run over a
+ * paragraph's own properties unchanged. Without this the body walker would need
+ * its own copy of every property reader, and the two would drift.
+ *
+ * An element with neither attributes nor children becomes the empty string
+ * rather than an empty object, because that is what fast-xml-parser yields for
+ * a bare `<w:b/>` and what `value()` tells presence from absence by.
+ */
+export function toXmlNode(node: SequenceNode): XmlNode {
+  const result: XmlNode = {};
+
+  for (const [name, value] of Object.entries(node.attributes)) {
+    result[`@${name}`] = value;
+  }
+
+  for (const child of node.children) {
+    append(
+      result,
+      child.name,
+      child.name === TEXT_NODE
+        ? (child.text ?? "")
+        : collapse(toXmlNode(child)),
+    );
+  }
+
+  return result;
+}
+
+/**
+ * `toArray` expects a bare value for one occurrence and an array for several,
+ * so the second occurrence of a name is what turns it into an array.
+ */
+function append(node: XmlNode, name: string, value: unknown): void {
+  const existing = node[name];
+  if (existing === undefined) {
+    node[name] = value;
+    return;
+  }
+  node[name] = Array.isArray(existing)
+    ? [...existing, value]
+    : [existing, value];
+}
+
+function collapse(node: XmlNode): XmlNode | string {
+  return Object.keys(node).length === 0 ? "" : node;
 }
 
 /** Depth-first search for the first element with the given name. */
