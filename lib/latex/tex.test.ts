@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
+import type { Assets } from "@/lib/extract/media";
 import type { StyleProfile, TextStyle } from "@/lib/extract/types";
 import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
 import { generateDocument } from "./tex";
@@ -489,5 +490,67 @@ describe("what the conversion changed", () => {
 
     expect(tex).toContain("A table sat inside a cell.");
     expect(tex).not.toContain("times)");
+  });
+});
+
+describe("pictures", () => {
+  const IMAGE = {
+    part: "word/media/image2.jpeg",
+    widthMm: 39.02,
+    heightMm: 29.09,
+    description: "taquaral2",
+  } as const;
+
+  function withPicture(assets: Assets): string {
+    return generateDocument({
+      profile: PROFILE,
+      blocks: paragraphBlocks([
+        { style: {}, runs: [{ kind: "image", image: IMAGE }] },
+      ]),
+      assets,
+    });
+  }
+
+  const CARRIED: Assets = new Map([["media/image2.jpeg", new Uint8Array([1])]]);
+
+  it("includes the picture at the size Word gave it", () => {
+    expect(withPicture(CARRIED)).toContain(
+      "\includegraphics[width=39.02mm,height=29.09mm]{media/image2.jpeg}",
+    );
+  });
+
+  // Passing the width alone would restore an aspect ratio a person had changed.
+  it("writes both dimensions rather than only the width", () => {
+    const tex = withPicture(CARRIED);
+
+    expect(tex).toContain("width=39.02mm");
+    expect(tex).toContain("height=29.09mm");
+  });
+
+  // A file the archive does not hold stops the compile on the reader's machine.
+  it("leaves out a picture whose bytes are not travelling with it", () => {
+    expect(withPicture(new Map())).not.toContain("\includegraphics");
+  });
+
+  it("stops claiming pictures are absent once they are carried", () => {
+    const tex = generateDocument({
+      profile: { ...PROFILE, features: { ...PROFILE.features, images: true } },
+      blocks: paragraphBlocks([
+        { style: {}, runs: [{ kind: "image", image: IMAGE }] },
+      ]),
+      assets: CARRIED,
+    });
+
+    expect(tex).not.toContain("the source document contains images");
+  });
+
+  it("still says so when the document's pictures could not be carried", () => {
+    const tex = generateDocument({
+      profile: { ...PROFILE, features: { ...PROFILE.features, images: true } },
+      blocks: paragraphBlocks([{ style: {}, runs: [run("a caption")] }]),
+      assets: new Map(),
+    });
+
+    expect(tex).toContain("the source document contains images");
   });
 });

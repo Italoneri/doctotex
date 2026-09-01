@@ -1,3 +1,4 @@
+import type { Assets } from "@/lib/extract/media";
 import type { SourceFiles } from "./bundle";
 
 /** Guards against a request asking for an archive of arbitrary size. */
@@ -46,6 +47,60 @@ export function readSources(payload: unknown): SourceFiles | undefined {
   }
 
   return sources.size > 0 ? sources : undefined;
+}
+
+/** Pictures compress far less than text, so they get their own, larger cap. */
+export const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Narrows the pictures a request carries, or returns undefined so the caller
+ * answers 400.
+ *
+ * They travel as base64 because a JSON body has no way to carry bytes. An
+ * entry that is not valid base64 is rejected rather than decoded to whatever
+ * `Buffer.from` makes of it, which for a malformed string is a shorter buffer
+ * and a picture that arrives silently corrupt.
+ */
+export function readAssets(payload: unknown): Assets | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const raw = (payload as { assets?: unknown }).assets;
+  if (raw === undefined) {
+    return new Map();
+  }
+  if (typeof raw !== "object" || raw === null) {
+    return undefined;
+  }
+
+  const assets = new Map<string, Uint8Array>();
+  let total = 0;
+
+  for (const [path, encoded] of Object.entries(raw)) {
+    if (typeof encoded !== "string" || !isSafePath(path)) {
+      return undefined;
+    }
+    const bytes = decodeBase64(encoded);
+    if (!bytes) {
+      return undefined;
+    }
+    total += bytes.byteLength;
+    if (total > MAX_ASSET_BYTES) {
+      return undefined;
+    }
+    assets.set(path, bytes);
+  }
+
+  return assets;
+}
+
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
+
+function decodeBase64(encoded: string): Uint8Array | undefined {
+  if (encoded.length % 4 !== 0 || !BASE64.test(encoded)) {
+    return undefined;
+  }
+  return new Uint8Array(Buffer.from(encoded, "base64"));
 }
 
 /**

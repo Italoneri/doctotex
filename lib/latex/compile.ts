@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { SourceFiles } from "./bundle";
+import type { Assets } from "@/lib/extract/media";
+import { EMPTY_ASSETS, type SourceFiles } from "./bundle";
 import { compileCommands, type BibTool, type Engine } from "./options";
 
 const run = promisify(execFile);
@@ -37,6 +38,8 @@ export type CompileResult =
 
 export interface CompileOptions {
   readonly engine?: Engine;
+  /** Pictures the sources include, written beside them before the engine runs. */
+  readonly assets?: Assets;
   /** Runs between the engine passes; `none` means a single pass. */
   readonly bibTool?: BibTool;
   /** Overridable so a test can point at a command that is certain to be absent. */
@@ -58,11 +61,18 @@ export async function compile(
   const directory = await mkdtemp(join(tmpdir(), "doctotex-"));
 
   try {
-    await Promise.all(
-      [...sources].map(([path, content]) =>
+    await Promise.all([
+      ...[...sources].map(([path, content]) =>
         writeFile(join(directory, path), content, "utf8"),
       ),
-    );
+      // A picture sits in a subdirectory the workspace does not have yet, and
+      // `writeFile` will not make one.
+      ...[...(options.assets ?? EMPTY_ASSETS)].map(async ([path, bytes]) => {
+        const file = join(directory, path);
+        await mkdir(dirname(file), { recursive: true });
+        await writeFile(file, bytes);
+      }),
+    ]);
 
     return await runEngine(directory, entry, options);
   } finally {

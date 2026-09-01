@@ -16,6 +16,7 @@ import {
   type GenerationOptions,
 } from "./options";
 import { paragraphsOf, type Block, type Paragraph } from "@/lib/extract/body";
+import { assetPathFor, type Assets } from "@/lib/extract/media";
 import type {
   Alignment,
   EffectiveStyle,
@@ -70,6 +71,8 @@ export interface ClassInput {
    * loaded only the declared faces would render that run in the wrong one.
    */
   readonly blocks?: readonly Block[];
+  /** The pictures that travel with the sources; an absent one is not loaded for. */
+  readonly assets?: Assets;
   readonly headerFooter?: HeaderFooterText;
   readonly usage?: StyleUsage;
   readonly options?: GenerationOptions;
@@ -82,6 +85,7 @@ export interface ClassInput {
  * document needed it, which is the opposite of what the comments are for.
  */
 interface Needs {
+  readonly pictures: boolean;
   readonly strikeOrUnderline: boolean;
   readonly justifiedParagraphs: boolean;
   readonly shapedParagraphs: boolean;
@@ -89,11 +93,23 @@ interface Needs {
   readonly tables: TableNeeds;
 }
 
-function needsOf(profile: StyleProfile, blocks: readonly Block[]): Needs {
+function needsOf(
+  profile: StyleProfile,
+  blocks: readonly Block[],
+  assets: Assets,
+): Needs {
   const bodyAlignment = profile.defaults.paragraph.alignment ?? "left";
   const paragraphs = paragraphsOf(blocks);
 
   return {
+    // What the document places, narrowed to what actually travels with it: a
+    // picture the package did not hold is not a reason to load graphicx.
+    pictures: paragraphs.some((paragraph) =>
+      paragraph.runs.some(
+        (run) =>
+          run.kind === "image" && assets.has(assetPathFor(run.image.part)),
+      ),
+    ),
     strikeOrUnderline: paragraphs.some((paragraph) =>
       paragraph.runs.some(
         (run) =>
@@ -157,7 +173,7 @@ export function preambleLines(input: ClassInput): readonly string[] {
   const options = input.options ?? DEFAULT_OPTIONS;
   const blocks = input.blocks ?? [];
   const paragraphs = paragraphsOf(blocks);
-  const needs = needsOf(profile, blocks);
+  const needs = needsOf(profile, blocks, input.assets ?? new Map());
 
   const bodySizePt = profile.defaults.text.fontSizePt ?? DEFAULT_BODY_SIZE_PT;
   const bodyFamily = mapFont(profile.defaults.text.fontFamily).family;
@@ -166,6 +182,7 @@ export function preambleLines(input: ClassInput): readonly string[] {
   return [
     ...fontSetup(profile, paragraphs, bodySizePt, options.engine),
     ...prefixed(inlineDecorations(needs)),
+    ...prefixed(pictures(needs)),
     ...prefixed(needs.lists ? listPreamble() : []),
     ...prefixed(tablePreamble(needs.tables)),
     "",
@@ -181,6 +198,19 @@ export function preambleLines(input: ClassInput): readonly string[] {
     ...pageStyle(input.headerFooter ?? {}),
     ...prefixed(bibliography.preamble),
   ];
+}
+
+/**
+ * `graphicx` is what `\includegraphics` comes from. The picture's size is
+ * written at each use rather than set here: Word sizes each one individually,
+ * and a class-wide default would be a number no picture in the document asked
+ * for.
+ */
+function pictures(needs: Needs): readonly string[] {
+  if (!needs.pictures) {
+    return [];
+  }
+  return ["%% The document places pictures.", "\\RequirePackage{graphicx}"];
 }
 
 /**

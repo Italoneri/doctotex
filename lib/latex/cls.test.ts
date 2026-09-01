@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { paragraphBlocks } from "@/lib/extract/body";
 import type { StyleProfile } from "@/lib/extract/types";
 import { generateClass, type ClassInput } from "./cls";
 import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
@@ -330,5 +331,43 @@ describe("bibliography", () => {
 
     expect(cls).toContain("\\RequirePackage[alf]{abntex2cite}");
     expect(cls).not.toContain("\\RequirePackage{natbib}");
+  });
+});
+
+describe("pictures", () => {
+  const IMAGE_BLOCKS = paragraphBlocks([
+    {
+      style: {},
+      runs: [
+        {
+          kind: "image",
+          image: { part: "word/media/image1.png", widthMm: 40, heightMm: 30 },
+        },
+      ],
+    },
+  ]);
+
+  it("loads graphicx where a picture travels with the document", () => {
+    const cls = generate(
+      {},
+      {
+        blocks: IMAGE_BLOCKS,
+        assets: new Map([["media/image1.png", new Uint8Array([1])]]),
+      },
+    );
+
+    expect(cls).toContain("\RequirePackage{graphicx}");
+  });
+
+  // A package loaded for a picture that is not there reads as though the
+  // document had one.
+  it("leaves graphicx out where the picture did not come across", () => {
+    const cls = generate({}, { blocks: IMAGE_BLOCKS, assets: new Map() });
+
+    expect(cls).not.toContain("graphicx");
+  });
+
+  it("leaves graphicx out of a document with no pictures at all", () => {
+    expect(generate()).not.toContain("graphicx");
   });
 });

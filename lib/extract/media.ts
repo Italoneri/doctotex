@@ -1,3 +1,4 @@
+import type { DocxArchive } from "@/lib/docx/archive";
 import {
   attributeOf,
   findDescendant,
@@ -5,6 +6,13 @@ import {
 } from "@/lib/docx/sequence";
 import type { Degradations } from "./report";
 import { emuToMm, toInteger } from "./units";
+
+/**
+ * The generated files that are not text, by the path the sources refer to them
+ * by. Kept apart from the sources rather than mixed in: the editor shows text
+ * and a reader edits it, and neither is true of a JPEG.
+ */
+export type Assets = ReadonlyMap<string, Uint8Array>;
 
 /** The part a relationship id points at, as a path inside the package. */
 export type Relationships = ReadonlyMap<string, string>;
@@ -155,4 +163,35 @@ function describe(node: SequenceNode): string | undefined {
 
 function formatOf(part: string): string {
   return part.slice(part.lastIndexOf(".") + 1).toLowerCase();
+}
+
+/**
+ * What the generated sources call a picture, derived from where it sat in the
+ * package. Word already names its media uniquely within a document, so keeping
+ * that name means the archive a reader unpacks matches what the `.tex` refers
+ * to without a second mapping anyone has to keep in step.
+ */
+export function assetPathFor(part: string): string {
+  return part.replace(/^word\//, "");
+}
+
+/**
+ * The bytes behind the given parts, keyed by the path the sources use.
+ *
+ * Read on demand rather than during the body walk: most of what a `.docx`
+ * weighs is its media, and a conversion that only reports on the document
+ * should not decompress a 20 MB photograph to do it.
+ */
+export async function readImages(
+  archive: DocxArchive,
+  parts: readonly string[],
+): Promise<Assets> {
+  const entries = await Promise.all(
+    parts.map(async (part) => {
+      const bytes = await archive.zip.file(part)?.async("uint8array");
+      return bytes ? ([assetPathFor(part), bytes] as const) : undefined;
+    }),
+  );
+
+  return new Map(entries.filter((entry) => entry !== undefined));
 }

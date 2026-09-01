@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { countStyleUsage, paragraphsOf, type Block } from "@/lib/extract/body";
+import type { Assets } from "@/lib/extract/media";
 import type { ConversionReport } from "@/lib/extract/report";
 import type { StyleProfile } from "@/lib/extract/types";
 import { BIB_FILE, bibliographyStub } from "./bib";
@@ -19,6 +20,12 @@ export type SourceFiles = ReadonlyMap<string, string>;
 export interface GenerateInput {
   readonly profile: StyleProfile;
   readonly blocks: readonly Block[];
+  /**
+   * The pictures that will travel beside the sources. The generator writes an
+   * `\includegraphics` only for a path that is in here, so a picture the
+   * package turned out not to hold cannot reach the document as a broken one.
+   */
+  readonly assets?: Assets;
   readonly headerFooter?: HeaderFooterText;
   readonly options?: GenerationOptions;
   /** What the extraction had to change, written into the generated document. */
@@ -34,6 +41,7 @@ export function generateSources(input: GenerateInput): SourceFiles {
     usage: countStyleUsage(paragraphsOf(input.blocks)),
     options,
     report: input.report,
+    assets: input.assets ?? EMPTY_ASSETS,
   };
 
   const sources = new Map<string, string>();
@@ -54,10 +62,25 @@ export function generateSources(input: GenerateInput): SourceFiles {
   return sources;
 }
 
-export async function buildZip(sources: SourceFiles): Promise<Uint8Array> {
+export const EMPTY_ASSETS: Assets = new Map();
+
+/**
+ * The sources and the pictures they refer to, in one archive.
+ *
+ * The two are separate arguments rather than one map because they are not the
+ * same kind of thing: the text is generated and editable, the media is copied
+ * out of the `.docx` byte for byte.
+ */
+export async function buildZip(
+  sources: SourceFiles,
+  assets: Assets = EMPTY_ASSETS,
+): Promise<Uint8Array> {
   const zip = new JSZip();
   for (const [path, content] of sources) {
     zip.file(path, content);
+  }
+  for (const [path, bytes] of assets) {
+    zip.file(path, bytes);
   }
   // DEFLATE keeps the download small; these are text files that compress well.
   return zip.generateAsync({

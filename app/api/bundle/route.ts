@@ -1,11 +1,13 @@
 import { buildZip } from "@/lib/latex/bundle";
-import { readSources } from "@/lib/latex/payload";
+import { readAssets, readSources } from "@/lib/latex/payload";
 
 export const runtime = "nodejs";
 
 export interface BundleRequest {
   readonly filename: string;
   readonly sources: Readonly<Record<string, string>>;
+  /** Base64, as they arrived from the conversion; the archive holds the bytes. */
+  readonly assets?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -26,7 +28,12 @@ export async function POST(request: Request): Promise<Response> {
     return problem("Request must carry a sources object of file text.");
   }
 
-  const zip = await buildZip(sources);
+  const assets = readAssets(payload);
+  if (!assets) {
+    return problem("The assets must be base64 file contents under safe paths.");
+  }
+
+  const zip = await buildZip(sources, assets);
   return new Response(new Uint8Array(zip), {
     headers: {
       "Content-Type": "application/zip",
