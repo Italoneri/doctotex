@@ -95,7 +95,7 @@ export function PreviewPane({ sources, options }: PreviewPaneProps) {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <Body state={state} />
+        <Body state={state} engine={ENGINE_LABELS[options.engine]} />
       </div>
     </section>
   );
@@ -131,7 +131,13 @@ function Status({
   );
 }
 
-function Body({ state }: { readonly state: PreviewState }) {
+function Body({
+  state,
+  engine,
+}: {
+  readonly state: PreviewState;
+  readonly engine: string;
+}) {
   if (state.status === "ready") {
     return (
       <object
@@ -155,14 +161,24 @@ function Body({ state }: { readonly state: PreviewState }) {
   }
 
   if (state.status === "rejected") {
+    const log = tail(state.log).trim();
     return (
       <div>
         <p className="border-b border-zinc-200 px-4 py-3 text-sm text-red-700 dark:border-zinc-800 dark:text-red-300">
-          pdfLaTeX rejected the document. The log says:
+          {engine} rejected the document.{log ? " The log says:" : ""}
         </p>
-        <pre className="max-h-80 overflow-auto bg-zinc-50 p-4 font-mono text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-200">
-          {tail(state.log)}
-        </pre>
+        {log ? (
+          <pre className="max-h-80 overflow-auto bg-zinc-50 p-4 font-mono text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-200">
+            {log}
+          </pre>
+        ) : (
+          // An empty log is not an empty error. The engine ended without
+          // writing one, so say that rather than showing a blank box the
+          // reader would read as a rendering fault.
+          <p className="px-4 py-6 text-center text-sm text-zinc-600 dark:text-zinc-400">
+            It produced no PDF and wrote no log, so there is nothing to quote.
+          </p>
+        )}
       </div>
     );
   }
