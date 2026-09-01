@@ -58,6 +58,16 @@ export async function compile(
   entry: string,
   options: CompileOptions = {},
 ): Promise<CompileResult> {
+  const assets = options.assets ?? EMPTY_ASSETS;
+
+  const missing = missingPictures(sources, assets);
+  if (missing.length > 0) {
+    return {
+      kind: "unavailable",
+      reason: `The sources include ${missing.join(", ")}, which did not arrive with them. Nothing was compiled, because the engine would report this against the \\includegraphics line rather than against the picture that is absent.`,
+    };
+  }
+
   const directory = await mkdtemp(join(tmpdir(), "doctotex-"));
 
   try {
@@ -67,7 +77,7 @@ export async function compile(
       ),
       // A picture sits in a subdirectory the workspace does not have yet, and
       // `writeFile` will not make one.
-      ...[...(options.assets ?? EMPTY_ASSETS)].map(async ([path, bytes]) => {
+      ...[...assets].map(async ([path, bytes]) => {
         const file = join(directory, path);
         await mkdir(dirname(file), { recursive: true });
         await writeFile(file, bytes);
@@ -78,6 +88,38 @@ export async function compile(
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+/** Every `\includegraphics` target, as written in the sources. */
+const INCLUDED_PICTURE = /\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+
+/**
+ * The pictures the sources ask for that are not travelling with them.
+ *
+ * The generator only writes an `\includegraphics` for a picture it was handed,
+ * so this cannot fire on generated output. It fires on what arrives from a
+ * browser, where the sources and the pictures are two fields that can disagree
+ * — an older page that sends one and not the other, or a request assembled by
+ * hand. Left to the engine, that disagreement surfaces as an error against the
+ * `\includegraphics` line, which reads as a fault in the LaTeX rather than as
+ * a picture that never arrived.
+ */
+function missingPictures(
+  sources: SourceFiles,
+  assets: Assets,
+): readonly string[] {
+  const missing = new Set<string>();
+
+  for (const content of sources.values()) {
+    for (const [, target] of content.matchAll(INCLUDED_PICTURE)) {
+      // A path the engine resolves for itself, against its own search rules.
+      if (target && !target.startsWith("/") && !assets.has(target)) {
+        missing.add(target);
+      }
+    }
+  }
+
+  return [...missing];
 }
 
 async function runEngine(

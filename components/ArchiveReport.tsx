@@ -9,12 +9,18 @@ import { StyleProfileReport } from "./StyleProfileReport";
 
 interface ArchiveReportProps {
   readonly result: ConvertSuccess;
+  /** A settings change is in flight, so everything here is the previous one. */
+  readonly regenerating?: boolean;
   readonly onReset: () => void;
 }
 
 type Sources = Readonly<Record<string, string>>;
 
-export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
+export function ArchiveReport({
+  result,
+  regenerating = false,
+  onReset,
+}: ArchiveReportProps) {
   // Lifted out of the panel because the preview compiles what the reader is
   // looking at, not what the converter first produced.
   const [sources, setSources] = useState<Sources>(result.sources);
@@ -77,6 +83,7 @@ export function ArchiveReport({ result, onReset }: ArchiveReportProps) {
           sources={sources}
           assets={result.assets}
           options={result.options}
+          regenerating={regenerating}
         />
       </div>
 
