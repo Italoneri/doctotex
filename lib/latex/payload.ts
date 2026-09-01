@@ -81,7 +81,7 @@ export function readAssets(payload: unknown): Assets | undefined {
       return undefined;
     }
     const bytes = decodeBase64(encoded);
-    if (!bytes) {
+    if (!bytes || !isDeclaredFormat(path, bytes)) {
       return undefined;
     }
     total += bytes.byteLength;
@@ -101,6 +101,46 @@ function decodeBase64(encoded: string): Uint8Array | undefined {
     return undefined;
   }
   return new Uint8Array(Buffer.from(encoded, "base64"));
+}
+
+/**
+ * How each format the generator may include announces itself in its first
+ * bytes. Every one of these is fixed by its specification, so a file that does
+ * not open this way is not that format whatever it is named.
+ */
+const SIGNATURES: ReadonlyMap<string, readonly number[]> = new Map([
+  ["png", [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  // JPEG's fourth byte varies by marker; the first three do not.
+  ["jpg", [0xff, 0xd8, 0xff]],
+  ["jpeg", [0xff, 0xd8, 0xff]],
+  ["pdf", [0x25, 0x50, 0x44, 0x46]],
+]);
+
+/**
+ * Whether the bytes are the format the name claims.
+ *
+ * Base64 that decodes cleanly can still be the wrong thing entirely — the
+ * failure that prompted this check wrote a picture's *base64 text* into the
+ * file, which is well-formed, decodes, and is not an image. TeX answers that
+ * with "the requested image couldn't be read because it was not a recognized
+ * image format", pointing at the `\includegraphics` line, which reads like a
+ * fault in the generated LaTeX rather than in what was sent. Naming it here
+ * costs one comparison and puts the message where the mistake is.
+ *
+ * An extension the generator never emits is left alone rather than guessed at.
+ */
+function isDeclaredFormat(path: string, bytes: Uint8Array): boolean {
+  const signature = SIGNATURES.get(
+    path.slice(path.lastIndexOf(".") + 1).toLowerCase(),
+  );
+  if (!signature) {
+    return true;
+  }
+
+  return (
+    bytes.length >= signature.length &&
+    signature.every((byte, index) => bytes[index] === byte)
+  );
 }
 
 /**

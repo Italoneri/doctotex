@@ -554,3 +554,52 @@ describe.skipIf(!dockerUp)("a document with a picture", () => {
     );
   });
 });
+
+// Needs no daemon: the disagreement is settled before anything is started.
+describe("sources that ask for a picture that did not arrive", () => {
+  const WITH_PICTURE: SourceFiles = new Map([
+    [
+      MAIN_FILE,
+      "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n" +
+        "\\includegraphics[width=20mm,height=20mm]{media/image1.png}\n" +
+        "\\end{document}\n",
+    ],
+  ]);
+
+  it("names the picture rather than letting the engine fail on it", async () => {
+    const result = await compile(WITH_PICTURE, MAIN_FILE, {
+      docker: "docker-that-does-not-exist",
+    });
+
+    expect(result.kind).toBe("unavailable");
+    expect(result.kind === "unavailable" && result.reason).toContain(
+      "media/image1.png",
+    );
+  });
+
+  it("says nothing where the picture is travelling with the sources", async () => {
+    const result = await compile(WITH_PICTURE, MAIN_FILE, {
+      assets: new Map([["media/image1.png", new Uint8Array([1])]]),
+      docker: "docker-that-does-not-exist",
+    });
+
+    // Past the check and into the run, which is what the absent docker proves.
+    expect(result.kind === "unavailable" && result.reason).toContain(
+      "docker command was not found",
+    );
+  });
+
+  it("leaves a path the engine resolves for itself alone", async () => {
+    const absolute: SourceFiles = new Map([
+      [MAIN_FILE, "\\includegraphics{/usr/share/example.png}\n"],
+    ]);
+
+    const result = await compile(absolute, MAIN_FILE, {
+      docker: "docker-that-does-not-exist",
+    });
+
+    expect(result.kind === "unavailable" && result.reason).toContain(
+      "docker command was not found",
+    );
+  });
+});

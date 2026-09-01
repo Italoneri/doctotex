@@ -7,11 +7,23 @@ import { ENGINE_LABELS, type GenerationOptions } from "@/lib/latex/options";
 /** Long enough that a burst of typing costs one container, not twenty. */
 const DEBOUNCE_MS = 1200;
 
-type PreviewState =
+type PreviewOutcome =
   | { readonly status: "compiling" }
   | { readonly status: "ready"; readonly url: string }
   | { readonly status: "rejected"; readonly log: string }
   | { readonly status: "unavailable"; readonly message: string };
+
+/**
+ * An outcome and the engine that produced it, never the engine currently
+ * selected.
+ *
+ * A settings change leaves the previous report on screen while the new one is
+ * generated, so those two are different for as long as that takes. Reading the
+ * label off the selection made a XeLaTeX failure carry pdfLaTeX's name — which
+ * sends the reader to the wrong preamble, and is the sort of wrong that costs
+ * an afternoon.
+ */
+type PreviewState = PreviewOutcome & { readonly engine: string };
 
 type Sources = Readonly<Record<string, string>>;
 
@@ -20,10 +32,20 @@ interface PreviewPaneProps {
   /** Sent with every compile: the engine resolves \includegraphics against them. */
   readonly assets: Sources;
   readonly options: GenerationOptions;
+  /** Set while a settings change is being converted, so this pane is behind. */
+  readonly regenerating?: boolean;
 }
 
-export function PreviewPane({ sources, assets, options }: PreviewPaneProps) {
-  const [state, setState] = useState<PreviewState>({ status: "compiling" });
+export function PreviewPane({
+  sources,
+  assets,
+  options,
+  regenerating = false,
+}: PreviewPaneProps) {
+  const [state, setState] = useState<PreviewState>({
+    status: "compiling",
+    engine: ENGINE_LABELS[options.engine],
+  });
   // What the visible preview was built from. Comparing it to the current
   // sources is what "stale" means, so it is derived rather than tracked
   // separately and kept in step by hand.
@@ -56,7 +78,10 @@ export function PreviewPane({ sources, assets, options }: PreviewPaneProps) {
         queued.current = false;
         const snapshot = latest.current;
 
-        setState({ status: "compiling" });
+        setState({
+          status: "compiling",
+          engine: ENGINE_LABELS[options.engine],
+        });
         const next = await requestPreview(snapshot, assets, options);
 
         if (!alive.current) {
@@ -92,12 +117,12 @@ export function PreviewPane({ sources, assets, options }: PreviewPaneProps) {
         <Status
           state={state}
           stale={renderedFrom !== sources}
-          engine={ENGINE_LABELS[options.engine]}
+          regenerating={regenerating}
         />
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <Body state={state} engine={ENGINE_LABELS[options.engine]} />
+        <Body state={state} />
       </div>
     </section>
   );
@@ -106,16 +131,26 @@ export function PreviewPane({ sources, assets, options }: PreviewPaneProps) {
 function Status({
   state,
   stale,
-  engine,
+  regenerating,
 }: {
   readonly state: PreviewState;
   readonly stale: boolean;
-  readonly engine: string;
+  readonly regenerating: boolean;
 }) {
   if (state.status === "compiling") {
     return (
       <span role="status" className="text-sm text-zinc-500 dark:text-zinc-400">
-        Running {engine}&hellip;
+        Running {state.engine}&hellip;
+      </span>
+    );
+  }
+  // Said before staleness, because it is the stronger claim: the settings the
+  // panel now shows are not the settings this preview was built with, and
+  // saying only "matches the sources above" would invite reading it as current.
+  if (regenerating) {
+    return (
+      <span className="text-sm text-amber-700 dark:text-amber-300">
+        Built with the previous settings &mdash; regenerating
       </span>
     );
   }
@@ -133,13 +168,7 @@ function Status({
   );
 }
 
-function Body({
-  state,
-  engine,
-}: {
-  readonly state: PreviewState;
-  readonly engine: string;
-}) {
+function Body({ state }: { readonly state: PreviewState }) {
   if (state.status === "ready") {
     return (
       <object
@@ -167,7 +196,7 @@ function Body({
     return (
       <div>
         <p className="border-b border-zinc-200 px-4 py-3 text-sm text-red-700 dark:border-zinc-800 dark:text-red-300">
-          {engine} rejected the document.{log ? " The log says:" : ""}
+          {state.engine} rejected the document.{log ? " The log says:" : ""}
         </p>
         {log ? (
           <pre className="max-h-80 overflow-auto bg-zinc-50 p-4 font-mono text-xs leading-relaxed text-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-200">
@@ -203,6 +232,10 @@ async function requestPreview(
   assets: Sources,
   options: GenerationOptions,
 ): Promise<PreviewState> {
+  // Read here rather than at the call site: the engine that ran is a property
+  // of the request, and taking it from anywhere else is what let the two drift.
+  const engine = ENGINE_LABELS[options.engine];
+
   let response: Response;
   try {
     response = await fetch("/api/preview", {
@@ -214,18 +247,23 @@ async function requestPreview(
     return {
       status: "unavailable",
       message: "Could not reach the compiler. Is the dev server running?",
+      engine,
     };
   }
 
   if (response.ok) {
-    return { status: "ready", url: URL.createObjectURL(await response.blob()) };
+    return {
+      status: "ready",
+      url: URL.createObjectURL(await response.blob()),
+      engine,
+    };
   }
 
   const failure: PreviewFailure = await response.json();
   if (failure.reason === "rejected") {
-    return { status: "rejected", log: failure.log };
+    return { status: "rejected", log: failure.log, engine };
   }
-  return { status: "unavailable", message: failure.error };
+  return { status: "unavailable", message: failure.error, engine };
 }
 
 function revoke(state: PreviewState): void {

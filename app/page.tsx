@@ -150,6 +150,7 @@ export default function Home() {
             <ArchiveReport
               key={state.revision}
               result={state.result}
+              regenerating={state.pending}
               onReset={reset}
             />
           </>
