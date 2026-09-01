@@ -37,7 +37,7 @@ const PROFILE: StyleProfile = {
 };
 
 function run(text: string, style: TextStyle = {}): Paragraph["runs"][number] {
-  return { text, style };
+  return { kind: "text", text, style };
 }
 
 /** A paragraph that asks for nothing beyond the document's own defaults. */

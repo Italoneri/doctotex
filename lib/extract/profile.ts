@@ -1,6 +1,7 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
 import { extractBlocks, type Block } from "./body";
+import { DOCUMENT_RELATIONSHIPS, parseRelationships } from "./media";
 import { parseNumbering } from "./numbering";
 import { extractPage } from "./page";
 import { collectDegradations, type ConversionReport } from "./report";
@@ -56,6 +57,11 @@ export async function extractDocument(
     sheet,
     numbering,
     degradations,
+    // A picture names a relationship id, never a part, so the body cannot be
+    // read into anything includable without this map in hand.
+    relationships: parseRelationships(
+      await readTextPart(archive, DOCUMENT_RELATIONSHIPS),
+    ),
   });
 
   return {

@@ -4,7 +4,7 @@ import { hasFixture, readFixture } from "@/fixtures/fixture";
 import { openDocx } from "@/lib/docx/archive";
 import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
 import { extractDocument } from "@/lib/extract/profile";
-import type { StyleProfile } from "@/lib/extract/types";
+import type { StyleProfile, TextStyle } from "@/lib/extract/types";
 import { BIB_FILE } from "./bib";
 import { CLASS_FILE, generateSources, type SourceFiles } from "./bundle";
 import { compile, type CompileResult, isDockerAvailable } from "./compile";
@@ -126,29 +126,30 @@ const PARAGRAPHS: readonly Paragraph[] = [
     style: {},
     runs: [
       text("Body text with "),
-      { text: "bold", style: { bold: true } },
+      text("bold", { bold: true }),
       text(" and reserved characters: 50% of A&B costs $3_00 #1 {x} ~y ^z."),
     ],
   },
   {
     style: { alignment: "center", spaceBeforePt: 12, spaceAfterPt: 6 },
     runs: [
-      {
-        text: "Centred, coloured, underlined",
-        style: { colorHex: "#2E74B5", underline: true, fontSizePt: 14 },
-      },
+      text("Centred, coloured, underlined", {
+        colorHex: "#2E74B5",
+        underline: true,
+        fontSizePt: 14,
+      }),
     ],
   },
   {
     style: { alignment: "justify", indentLeftMm: 10, indentFirstLineMm: 5 },
     runs: [
-      { text: "Struck through", style: { strike: true } },
+      text("Struck through", { strike: true }),
       text(", small caps "),
-      { text: "here", style: { smallCaps: true } },
+      text("here", { smallCaps: true }),
       text(", a footnote mark"),
-      { text: "1", style: { script: "superscript" } },
+      text("1", { script: "superscript" }),
       text(", and a line break."),
-      { text: "\nAfter the break, in Arial.", style: { fontFamily: "Arial" } },
+      text("\nAfter the break, in Arial.", { fontFamily: "Arial" }),
     ],
   },
   { styleId: "Heading2", style: {}, runs: [text("Method")] },
@@ -158,8 +159,8 @@ const PARAGRAPHS: readonly Paragraph[] = [
   },
 ];
 
-function text(value: string): Paragraph["runs"][number] {
-  return { text: value, style: {} };
+function text(value: string, style: TextStyle = {}): Paragraph["runs"][number] {
+  return { kind: "text", text: value, style };
 }
 
 function sourcesFor(overrides: Partial<GenerationOptions>): {

@@ -7,6 +7,7 @@ import {
   toXmlNode,
   type SequenceNode,
 } from "@/lib/docx/sequence";
+import { readDrawing, type ImageRef, type Relationships } from "./media";
 import { resolveMarker, type ListMarker, type Numbering } from "./numbering";
 import type { Degradations } from "./report";
 import {
@@ -40,17 +41,34 @@ export const PAGE_BREAK = "\f";
 export const COLUMN_BREAK = "\v";
 
 export interface TextRun {
+  readonly kind: "text";
   readonly text: string;
   /** Fully resolved: the cascade has already run, so nothing here inherits. */
   readonly style: TextStyle;
 }
+
+/**
+ * A picture sitting in the run sequence, where Word puts it.
+ *
+ * Word places a picture inside a `w:r`, which means it has a position within a
+ * sentence rather than between two paragraphs. A separate list of images
+ * alongside the runs would lose that position, and an image is far more often
+ * a paragraph of its own than mid-sentence — but "far more often" is not
+ * "always", and the shape should not decide which documents convert correctly.
+ */
+export interface ImageRun {
+  readonly kind: "image";
+  readonly image: ImageRef;
+}
+
+export type Run = TextRun | ImageRun;
 
 export interface Paragraph {
   /** Localised, e.g. `Titre1`. Kept so the sectioning role can be recovered. */
   readonly styleId?: string;
   /** Fully resolved, including the paragraph's own `w:pPr`. */
   readonly style: ParagraphStyle;
-  readonly runs: readonly TextRun[];
+  readonly runs: readonly Run[];
   /** Set where `w:numPr` puts the paragraph in a list, with its level resolved. */
   readonly list?: ListMarker;
 }
@@ -77,6 +95,8 @@ export interface BodyContext {
   readonly sheet: StyleSheet;
   readonly numbering: Numbering;
   readonly degradations: Degradations;
+  /** Where a picture's `r:embed` points, resolved to a part in the archive. */
+  readonly relationships: Relationships;
 }
 
 /**
@@ -114,6 +134,27 @@ export function paragraphsOf(blocks: readonly Block[]): readonly Paragraph[] {
           row.cells.flatMap((cell) => paragraphsOf(cell.blocks)),
         ),
   );
+}
+
+/**
+ * Every picture the blocks include, by part, without repeats.
+ *
+ * A document that places the same picture twice references one part twice, and
+ * writing it into the generated sources twice would double its weight in the
+ * archive the reader downloads.
+ */
+export function imagePartsOf(blocks: readonly Block[]): readonly string[] {
+  const parts = new Set<string>();
+
+  for (const paragraph of paragraphsOf(blocks)) {
+    for (const run of paragraph.runs) {
+      if (run.kind === "image") {
+        parts.add(run.image.part);
+      }
+    }
+  }
+
+  return [...parts];
 }
 
 function readBlocks(
@@ -319,7 +360,7 @@ function readParagraph(node: SequenceNode, context: BodyContext): Paragraph {
   return {
     styleId,
     style: effective.paragraph,
-    runs: mergeAdjacent(collectRuns(node.children, context.sheet, effective)),
+    runs: mergeAdjacent(collectRuns(node.children, effective, context)),
     list: readListMarker(properties, styleId, context),
   };
 }
@@ -367,25 +408,21 @@ function readListMarker(
  */
 function collectRuns(
   nodes: readonly SequenceNode[],
-  sheet: StyleSheet,
   paragraph: EffectiveStyle,
-): readonly TextRun[] {
-  const runs: TextRun[] = [];
+  context: BodyContext,
+): readonly Run[] {
+  const runs: Run[] = [];
 
   for (const node of nodes) {
     switch (node.name) {
-      case "w:r": {
-        const run = readRun(node, sheet, paragraph);
-        if (run.text !== "") {
-          runs.push(run);
-        }
+      case "w:r":
+        runs.push(...readRun(node, paragraph, context));
         break;
-      }
       case "w:hyperlink":
       case "w:smartTag":
       case "w:ins":
       case "w:moveTo":
-        runs.push(...collectRuns(node.children, sheet, paragraph));
+        runs.push(...collectRuns(node.children, paragraph, context));
         break;
       default:
         break;
@@ -395,23 +432,53 @@ function collectRuns(
   return runs;
 }
 
+/**
+ * One `w:r` as the runs it holds.
+ *
+ * A run is usually either text or a picture, but the schema allows both, and
+ * the children are walked in order rather than partitioned so that a picture
+ * between two words stays between them. Text accumulates until a picture
+ * interrupts it, which is also what keeps a run of pure text a single run.
+ */
 function readRun(
   node: SequenceNode,
-  sheet: StyleSheet,
   paragraph: EffectiveStyle,
-): TextRun {
+  context: BodyContext,
+): readonly Run[] {
+  const { sheet, relationships, degradations } = context;
   const properties = findChild(node, "w:rPr");
   const runStyleId = attributeOf(findChild(properties, "w:rStyle"), "w:val");
+  const style = resolveRun(
+    sheet,
+    paragraph,
+    runStyleId,
+    readTextStyle(propertiesOf(properties), sheet.theme),
+  );
 
-  return {
-    text: node.children.map(readRunContent).join(""),
-    style: resolveRun(
-      sheet,
-      paragraph,
-      runStyleId,
-      readTextStyle(propertiesOf(properties), sheet.theme),
-    ),
+  const runs: Run[] = [];
+  let text = "";
+
+  const flush = () => {
+    if (text !== "") {
+      runs.push({ kind: "text", text, style });
+      text = "";
+    }
   };
+
+  for (const child of node.children) {
+    if (child.name !== "w:drawing") {
+      text += readRunContent(child);
+      continue;
+    }
+    const image = readDrawing(child, relationships, degradations);
+    if (image) {
+      flush();
+      runs.push({ kind: "image", image });
+    }
+  }
+
+  flush();
+  return runs;
 }
 
 /** The property readers work on the unordered view; this is the crossing. */
@@ -431,7 +498,7 @@ function readRunContent(node: SequenceNode): string {
       return "\n";
     case "w:noBreakHyphen":
       return "-";
-    // w:drawing, w:object and w:rPr contribute no text in this phase.
+    // w:object and w:rPr contribute no text; w:drawing is read as a run.
     default:
       return "";
   }
@@ -458,10 +525,14 @@ function breakOf(node: SequenceNode): string {
  * properties: merging two runs erases the boundary between them for good, so a
  * property the comparison cannot see is a property silently lost.
  */
-function mergeAdjacent(runs: readonly TextRun[]): readonly TextRun[] {
-  return runs.reduce<TextRun[]>((merged, run) => {
+function mergeAdjacent(runs: readonly Run[]): readonly Run[] {
+  return runs.reduce<Run[]>((merged, run) => {
     const previous = merged.at(-1);
-    if (previous && sameStyle(previous.style, run.style)) {
+    if (
+      previous?.kind === "text" &&
+      run.kind === "text" &&
+      sameStyle(previous.style, run.style)
+    ) {
       merged[merged.length - 1] = {
         ...previous,
         text: previous.text + run.text,
