@@ -8,6 +8,9 @@ const TWIPS_PER_INCH = 1440;
 const TWIPS_PER_POINT = 20;
 const MM_PER_INCH = 25.4;
 
+/** DrawingML measures pictures in English Metric Units, not twips. */
+const EMU_PER_INCH = 914400;
+
 /** `w:line` at `w:lineRule="auto"`: 240 twips is single spacing. */
 const TWIPS_PER_SINGLE_LINE = 240;
 
@@ -22,6 +25,10 @@ export function twipsToMm(twips: number): number {
 
 export function twipsToPt(twips: number): number {
   return round(twips / TWIPS_PER_POINT);
+}
+
+export function emuToMm(emu: number): number {
+  return round((emu / EMU_PER_INCH) * MM_PER_INCH);
 }
 
 /** `w:sz` and `w:szCs` are in half-points: `<w:sz w:val="24"/>` is 12pt. */

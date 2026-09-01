@@ -95,7 +95,10 @@ function needsOf(profile: StyleProfile, blocks: readonly Block[]): Needs {
 
   return {
     strikeOrUnderline: paragraphs.some((paragraph) =>
-      paragraph.runs.some((run) => run.style.underline || run.style.strike),
+      paragraph.runs.some(
+        (run) =>
+          run.kind === "text" && (run.style.underline || run.style.strike),
+      ),
     ),
     // Only worth a package where the document mixes the two: a wholly
     // justified document gets justification from LaTeX for nothing.
@@ -210,7 +213,9 @@ function fontPlan(
     ...profile.headings.map((heading) => heading.text.fontFamily),
     profile.title?.text.fontFamily,
     ...paragraphs.flatMap((paragraph) =>
-      paragraph.runs.map((run) => run.style.fontFamily),
+      paragraph.runs.flatMap((run) =>
+        run.kind === "text" ? [run.style.fontFamily] : [],
+      ),
     ),
   ];
 

@@ -5,7 +5,9 @@ import {
   paragraphsOf,
   type BodyContext,
   type Paragraph,
+  type TextRun,
 } from "./body";
+import { parseRelationships, type Relationships } from "./media";
 import { parseNumbering, type Numbering } from "./numbering";
 import { collectDegradations, type Degradations } from "./report";
 import { parseStyleSheet, type StyleSheet } from "./styles";
@@ -16,8 +18,14 @@ function context(
   sheet: StyleSheet = EMPTY_SHEET,
   numbering: Numbering = new Map(),
   degradations: Degradations = collectDegradations(),
+  relationships: Relationships = new Map(),
 ): BodyContext {
-  return { sheet, numbering, degradations };
+  return { sheet, numbering, degradations, relationships };
+}
+
+/** The text runs of a paragraph, which is what most of these assertions read. */
+function textRuns(paragraph: Paragraph | undefined): readonly TextRun[] {
+  return (paragraph?.runs ?? []).filter((run) => run.kind === "text");
 }
 
 const NUMBERING = parseNumbering(
@@ -55,7 +63,11 @@ function read(
 }
 
 function textOf(xml: string): readonly string[] {
-  return read(xml).map((p) => p.runs.map((r) => r.text).join(""));
+  return read(xml).map((p) =>
+    textRuns(p)
+      .map((r) => r.text)
+      .join(""),
+  );
 }
 
 function blank(styleId?: string): Paragraph {
@@ -206,7 +218,7 @@ describe("run formatting", () => {
       `<w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>strong</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs[0]?.style).toMatchObject({
+    expect(textRuns(read(xml)[0])[0]?.style).toMatchObject({
       bold: true,
       italic: true,
     });
@@ -217,13 +229,13 @@ describe("run formatting", () => {
       `<w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>plain</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs[0]?.style.bold).toBe(false);
+    expect(textRuns(read(xml)[0])[0]?.style.bold).toBe(false);
   });
 
   it("leaves a property the run never mentions unset", () => {
     const xml = paragraph(`<w:r><w:t>plain</w:t></w:r>`);
 
-    expect(read(xml)[0]?.runs[0]?.style.bold).toBeUndefined();
+    expect(textRuns(read(xml)[0])[0]?.style.bold).toBeUndefined();
   });
 
   it("reads colour and size", () => {
@@ -231,7 +243,7 @@ describe("run formatting", () => {
       `<w:r><w:rPr><w:color w:val="2E74B5"/><w:sz w:val="32"/></w:rPr><w:t>big</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs[0]?.style).toMatchObject({
+    expect(textRuns(read(xml)[0])[0]?.style).toMatchObject({
       colorHex: "#2E74B5",
       fontSizePt: 16,
     });
@@ -243,8 +255,8 @@ describe("run formatting", () => {
       paragraph(`<w:r><w:rPr><w:u w:val="none"/></w:rPr><w:t>b</w:t></w:r>`);
 
     const paragraphs = read(xml);
-    expect(paragraphs[0]?.runs[0]?.style.underline).toBe(true);
-    expect(paragraphs[1]?.runs[0]?.style.underline).toBe(false);
+    expect(textRuns(paragraphs[0])[0]?.style.underline).toBe(true);
+    expect(textRuns(paragraphs[1])[0]?.style.underline).toBe(false);
   });
 
   it("reads a double strike as a strike", () => {
@@ -252,7 +264,7 @@ describe("run formatting", () => {
       `<w:r><w:rPr><w:dstrike/></w:rPr><w:t>gone</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs[0]?.style.strike).toBe(true);
+    expect(textRuns(read(xml)[0])[0]?.style.strike).toBe(true);
   });
 
   it("reads small caps and vertical alignment", () => {
@@ -260,7 +272,7 @@ describe("run formatting", () => {
       `<w:r><w:rPr><w:smallCaps/><w:vertAlign w:val="superscript"/></w:rPr><w:t>1</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs[0]?.style).toMatchObject({
+    expect(textRuns(read(xml)[0])[0]?.style).toMatchObject({
       smallCaps: true,
       script: "superscript",
     });
@@ -273,14 +285,16 @@ describe("run formatting", () => {
       `<w:r><w:rPr><w:rFonts w:hAnsi="Calibri"/></w:rPr><w:t>a</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs[0]?.style.fontFamily).toBe("Calibri");
+    expect(textRuns(read(xml)[0])[0]?.style.fontFamily).toBe("Calibri");
   });
 
   // Word splits runs on every editing session, so identical formatting repeats.
   it("merges adjacent runs that share formatting", () => {
     const xml = paragraph(`<w:r><w:t>Hel</w:t></w:r><w:r><w:t>lo</w:t></w:r>`);
 
-    expect(read(xml)[0]?.runs).toEqual([{ text: "Hello", style: {} }]);
+    expect(textRuns(read(xml)[0])).toEqual([
+      { kind: "text", text: "Hello", style: {} },
+    ]);
   });
 
   it("keeps runs apart when their formatting differs", () => {
@@ -288,7 +302,7 @@ describe("run formatting", () => {
       `<w:r><w:t>plain</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>bold</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs.map((run) => run.text)).toEqual([
+    expect(textRuns(read(xml)[0]).map((run) => run.text)).toEqual([
       "plain",
       "bold",
     ]);
@@ -302,7 +316,10 @@ describe("run formatting", () => {
         `<w:r><w:rPr><w:color w:val="0000FF"/></w:rPr><w:t>blue</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs.map((run) => run.text)).toEqual(["red", "blue"]);
+    expect(textRuns(read(xml)[0]).map((run) => run.text)).toEqual([
+      "red",
+      "blue",
+    ]);
   });
 
   it("keeps runs apart when only their size differs", () => {
@@ -311,7 +328,7 @@ describe("run formatting", () => {
         `<w:r><w:rPr><w:sz w:val="40"/></w:rPr><w:t>large</w:t></w:r>`,
     );
 
-    expect(read(xml)[0]?.runs.map((run) => run.text)).toEqual([
+    expect(textRuns(read(xml)[0]).map((run) => run.text)).toEqual([
       "small",
       "large",
     ]);
@@ -366,7 +383,7 @@ describe("the cascade", () => {
       `<w:pPr><w:pStyle w:val="Titre1"/></w:pPr><w:r><w:t>Heading</w:t></w:r>`,
     );
 
-    expect(read(xml, sheet)[0]?.runs[0]?.style).toMatchObject({
+    expect(textRuns(read(xml, sheet)[0])[0]?.style).toMatchObject({
       bold: true,
       colorHex: "#2E74B5",
       fontSizePt: 10,
@@ -390,7 +407,7 @@ describe("the cascade", () => {
         `<w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>light</w:t></w:r>`,
     );
 
-    expect(read(xml, sheet)[0]?.runs[0]?.style.bold).toBe(false);
+    expect(textRuns(read(xml, sheet)[0])[0]?.style.bold).toBe(false);
   });
 
   it("applies a character style between the paragraph and the run", () => {
@@ -399,7 +416,7 @@ describe("the cascade", () => {
         `<w:r><w:rPr><w:rStyle w:val="Accent"/></w:rPr><w:t>slanted</w:t></w:r>`,
     );
 
-    expect(read(xml, sheet)[0]?.runs[0]?.style).toMatchObject({
+    expect(textRuns(read(xml, sheet)[0])[0]?.style).toMatchObject({
       bold: true,
       italic: true,
     });
@@ -411,7 +428,7 @@ describe("the cascade", () => {
       `<w:pPr><w:rPr><w:b/></w:rPr></w:pPr><w:r><w:t>plain</w:t></w:r>`,
     );
 
-    expect(read(xml, sheet)[0]?.runs[0]?.style.bold).toBeUndefined();
+    expect(textRuns(read(xml, sheet)[0])[0]?.style.bold).toBeUndefined();
   });
 });
 
@@ -631,7 +648,7 @@ describe("tables", () => {
       "<w:r><w:t>inside</w:t></w:r>",
     )}</w:sdtContent></w:sdt>`;
 
-    expect(paragraphsOf(blocks(xml)).map((p) => p.runs[0]?.text)).toEqual([
+    expect(paragraphsOf(blocks(xml)).map((p) => textRuns(p)[0]?.text)).toEqual([
       "inside",
     ]);
   });
@@ -648,9 +665,79 @@ describe("paragraphsOf", () => {
       context(EMPTY_SHEET, NUMBERING, collectDegradations()),
     );
 
-    expect(paragraphsOf(found).map((p) => p.runs[0]?.text)).toEqual([
+    expect(paragraphsOf(found).map((p) => textRuns(p)[0]?.text)).toEqual([
       "outside",
       "inside",
+    ]);
+  });
+});
+
+describe("pictures", () => {
+  const RELATIONSHIPS = parseRelationships(
+    `<Relationships><Relationship Id="rId4" Target="media/image1.png"/></Relationships>`,
+  );
+
+  function drawing(embed = "rId4"): string {
+    return `<w:drawing><wp:inline><wp:extent cx="914400" cy="457200"/>
+      <wp:docPr id="1" name="Image 1"/>
+      <a:blip r:embed="${embed}"/>
+    </wp:inline></w:drawing>`;
+  }
+
+  function readWithMedia(xml: string): readonly Paragraph[] {
+    return paragraphsOf(
+      extractBlocks(
+        documentXml(xml),
+        context(EMPTY_SHEET, new Map(), collectDegradations(), RELATIONSHIPS),
+      ),
+    );
+  }
+
+  it("reads a picture as a run of its own", () => {
+    const paragraphs = readWithMedia(paragraph(`<w:r>${drawing()}</w:r>`));
+
+    expect(paragraphs[0]?.runs).toEqual([
+      {
+        kind: "image",
+        image: {
+          part: "word/media/image1.png",
+          widthMm: 25.4,
+          heightMm: 12.7,
+          description: "Image 1",
+        },
+      },
+    ]);
+  });
+
+  // A picture between two words belongs between them, not before or after both.
+  it("keeps a picture in its place within the run's text", () => {
+    const xml = paragraph(
+      `<w:r><w:t>before</w:t>${drawing()}<w:t>after</w:t></w:r>`,
+    );
+
+    expect(readWithMedia(xml)[0]?.runs.map((run) => run.kind)).toEqual([
+      "text",
+      "image",
+      "text",
+    ]);
+  });
+
+  it("leaves the surrounding text unmerged across a picture", () => {
+    const xml = paragraph(
+      `<w:r><w:t>before</w:t>${drawing()}<w:t>after</w:t></w:r>`,
+    );
+
+    expect(textRuns(readWithMedia(xml)[0]).map((run) => run.text)).toEqual([
+      "before",
+      "after",
+    ]);
+  });
+
+  it("keeps the paragraph's text when the picture cannot be resolved", () => {
+    const xml = paragraph(`<w:r><w:t>caption</w:t>${drawing("rId99")}</w:r>`);
+
+    expect(readWithMedia(xml)[0]?.runs).toEqual([
+      { kind: "text", text: "caption", style: {} },
     ]);
   });
 });

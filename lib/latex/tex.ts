@@ -3,6 +3,7 @@ import {
   PAGE_BREAK,
   type Block,
   type Paragraph,
+  type Run,
   type TextRun,
 } from "@/lib/extract/body";
 import type { ListMarker } from "@/lib/extract/numbering";
@@ -493,11 +494,18 @@ function alignmentSwitch(paragraph: Paragraph, context: Context): string {
 }
 
 function renderRuns(
-  runs: readonly TextRun[],
+  runs: readonly Run[],
   baseline: TextStyle,
   surface: Surface,
 ): string {
-  return runs.map((run) => renderRun(run, baseline, surface)).join("");
+  // Pictures are extracted but not yet written into the sources; the note at
+  // the top of the document is what says so, and it is the only thing that
+  // stands in for them.
+  return runs
+    .map((run) =>
+      run.kind === "text" ? renderRun(run, baseline, surface) : "",
+    )
+    .join("");
 }
 
 /**
