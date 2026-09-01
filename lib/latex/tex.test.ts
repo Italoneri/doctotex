@@ -554,3 +554,38 @@ describe("pictures", () => {
     expect(tex).toContain("the source document contains images");
   });
 });
+
+describe("sections the document does not declare", () => {
+  it("writes an inferred heading as a section", () => {
+    const tex = render([
+      {
+        style: { alignment: "center" },
+        runs: [run("INTRODUÇÃO")],
+        inferredHeading: true,
+      },
+    ]);
+
+    expect(tex).toContain("\\section*{INTRODUÇÃO}");
+  });
+
+  // A style the document declares has already answered the question.
+  it("keeps a declared style's own level over the reading", () => {
+    const tex = generateDocument({
+      profile: {
+        ...PROFILE,
+        headings: [{ level: 3, styleId: "Titre3", text: {}, paragraph: {} }],
+      },
+      blocks: paragraphBlocks([
+        {
+          styleId: "Titre3",
+          style: {},
+          runs: [run("METHOD")],
+          inferredHeading: true,
+        },
+      ]),
+    });
+
+    expect(tex).toContain("\\subsubsection*{METHOD}");
+    expect(tex).not.toContain("\\section*{METHOD}");
+  });
+});

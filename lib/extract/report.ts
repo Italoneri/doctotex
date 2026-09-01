@@ -12,7 +12,8 @@ export type DegradationCode =
   | "table-cell-alignment"
   | "table-borders"
   | "unresolved-image"
-  | "unsupported-image-format";
+  | "unsupported-image-format"
+  | "inferred-heading";
 
 export interface Degradation {
   readonly code: DegradationCode;
