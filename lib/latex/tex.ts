@@ -6,6 +6,7 @@ import {
   type Run,
   type TextRun,
 } from "@/lib/extract/body";
+import { assetPathFor, type Assets, type ImageRef } from "@/lib/extract/media";
 import type { ListMarker } from "@/lib/extract/numbering";
 import { EMPTY_REPORT, type ConversionReport } from "@/lib/extract/report";
 import type { TableCell } from "@/lib/extract/table";
@@ -55,14 +56,20 @@ export interface DocumentInput extends ClassInput {
 
 export function generateDocument(input: DocumentInput): string {
   const options = input.options ?? DEFAULT_OPTIONS;
-  const context = contextOf(input.profile);
+  const context = contextOf(input.profile, input.assets ?? new Map());
   const bibliography = bibliographySetup(options.bibliography);
 
   return [
     ...opening(input, options),
     "",
     "\\begin{document}",
-    ...prefixed(conversionNotes(input.profile, input.report ?? EMPTY_REPORT)),
+    ...prefixed(
+      conversionNotes(
+        input.profile,
+        input.report ?? EMPTY_REPORT,
+        context.assets,
+      ),
+    ),
     "",
     ...renderBody(input.blocks, context),
     ...(bibliography.body.length === 0 ? [] : ["", ...bibliography.body]),
@@ -86,13 +93,21 @@ export function generateDocument(input: DocumentInput): string {
 function conversionNotes(
   profile: StyleProfile,
   report: ConversionReport,
+  assets: Assets,
 ): readonly string[] {
-  return [...missingFeatures(profile), ...degraded(report)];
+  return [...missingFeatures(profile, assets), ...degraded(report)];
 }
 
-function missingFeatures(profile: StyleProfile): readonly string[] {
+function missingFeatures(
+  profile: StyleProfile,
+  assets: Assets,
+): readonly string[] {
   const missing = [
-    profile.features.images && "images",
+    // Only where none came across. A document some of whose pictures travelled
+    // is not a document without pictures, and the report names the ones that
+    // did not — saying "contains images" over a page that shows them reads as
+    // though the conversion had done nothing.
+    profile.features.images && assets.size === 0 && "images",
     profile.features.ommlEquations && "equations",
     profile.features.oleObjects && "embedded objects",
   ].filter((entry): entry is string => typeof entry === "string");
@@ -207,6 +222,8 @@ interface Context {
   readonly roles: ReadonlyMap<string, Role>;
   readonly baselines: ReadonlyMap<string, TextStyle>;
   readonly surface: Surface;
+  /** What travels beside the document, which decides what it may refer to. */
+  readonly assets: Assets;
 }
 
 /**
@@ -223,7 +240,7 @@ type Surface = "body" | "cell";
  * Word marks a heading by pointing the paragraph at a style, so the mapping
  * from style to sectioning command is resolved once rather than per paragraph.
  */
-function contextOf(profile: StyleProfile): Context {
+function contextOf(profile: StyleProfile, assets: Assets): Context {
   const roles = new Map<string, Role>();
   const baselines = new Map<string, TextStyle>();
 
@@ -236,7 +253,7 @@ function contextOf(profile: StyleProfile): Context {
     baselines.set(profile.title.styleId, profile.title.text);
   }
 
-  return { profile, roles, baselines, surface: "body" };
+  return { profile, roles, baselines, surface: "body", assets };
 }
 
 /**
@@ -442,6 +459,7 @@ function bodyOf(paragraph: Paragraph, context: Context): string {
     renderRuns(
       paragraph.runs,
       baselineFor(paragraph, context),
+      context,
       context.surface,
     ),
     context.surface,
@@ -496,16 +514,36 @@ function alignmentSwitch(paragraph: Paragraph, context: Context): string {
 function renderRuns(
   runs: readonly Run[],
   baseline: TextStyle,
+  context: Context,
   surface: Surface,
 ): string {
-  // Pictures are extracted but not yet written into the sources; the note at
-  // the top of the document is what says so, and it is the only thing that
-  // stands in for them.
   return runs
     .map((run) =>
-      run.kind === "text" ? renderRun(run, baseline, surface) : "",
+      run.kind === "text"
+        ? renderRun(run, baseline, surface)
+        : renderImage(run.image, context),
     )
     .join("");
+}
+
+/**
+ * A picture at the size Word gave it.
+ *
+ * Both dimensions are written rather than one: Word stores a width and a
+ * height a person may have set independently, and passing only the width would
+ * silently restore an aspect ratio they had deliberately changed.
+ *
+ * A picture whose bytes are not travelling with the sources is left out. The
+ * report says why; an `\includegraphics` pointing at a file the archive does
+ * not hold would stop the compile instead.
+ */
+function renderImage(image: ImageRef, context: Context): string {
+  const path = assetPathFor(image.part);
+  if (!context.assets.has(path)) {
+    return "";
+  }
+
+  return `\\includegraphics[width=${mm(image.widthMm)},height=${mm(image.heightMm)}]{${path}}`;
 }
 
 /**

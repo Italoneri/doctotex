@@ -1,6 +1,6 @@
 import { compile } from "@/lib/latex/compile";
 import { bibToolFor, readOptions } from "@/lib/latex/options";
-import { readEntry, readSources } from "@/lib/latex/payload";
+import { readAssets, readEntry, readSources } from "@/lib/latex/payload";
 import { MAIN_FILE } from "@/lib/latex/tex";
 
 export const runtime = "nodejs";
@@ -48,6 +48,11 @@ export async function POST(request: Request): Promise<Response> {
     return invalid("The entry must name a .tex file present in the sources.");
   }
 
+  const assets = readAssets(payload);
+  if (!assets) {
+    return invalid("The assets must be base64 file contents under safe paths.");
+  }
+
   // The engine is not inferred from the sources. A fontspec preamble read by
   // pdfLaTeX fails in a way that looks like the reader's mistake, so the
   // selection that produced the sources travels with them.
@@ -76,6 +81,7 @@ export async function POST(request: Request): Promise<Response> {
     const result = await compile(sources, entry, {
       engine: options.engine,
       bibTool: bibToolFor(options.bibliography),
+      assets,
     });
 
     if (result.kind === "unavailable") {

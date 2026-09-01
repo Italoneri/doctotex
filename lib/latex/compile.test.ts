@@ -17,6 +17,7 @@ import {
   type GenerationOptions,
   type Layout,
 } from "./options";
+import type { Assets } from "@/lib/extract/media";
 import { MAIN_FILE } from "./tex";
 
 const FIXTURE = "exemplo.docx";
@@ -32,21 +33,31 @@ const COMPILE_TIMEOUT = { timeout: 300_000 };
 /** Three engine passes and a bibliography tool, on a container that is cold. */
 const MATRIX_TIMEOUT = { timeout: 600_000 };
 
-async function sourcesFromFixture(): Promise<SourceFiles> {
+/**
+ * The sources and the pictures they refer to. Returned together because they
+ * only mean anything together: the generator writes an `\includegraphics`
+ * for a picture it was given, and compiling without it is a missing file.
+ */
+async function fixtureBundle(): Promise<{
+  readonly sources: SourceFiles;
+  readonly assets: Assets;
+}> {
   const archive = await openDocx(await readFixture(FIXTURE));
+  const extracted = await extractDocument(archive);
 
-  return generateSources(await extractDocument(archive));
+  return { sources: generateSources(extracted), assets: extracted.assets };
 }
 
 describeCompiling("generated sources", () => {
   it("contain the class and the document", COMPILE_TIMEOUT, async () => {
-    const sources = await sourcesFromFixture();
+    const { sources } = await fixtureBundle();
 
     expect([...sources.keys()]).toEqual([CLASS_FILE, MAIN_FILE]);
   });
 
   it("compile under pdfLaTeX without errors", COMPILE_TIMEOUT, async () => {
-    const result = await compile(await sourcesFromFixture(), MAIN_FILE);
+    const { sources, assets } = await fixtureBundle();
+    const result = await compile(sources, MAIN_FILE, { assets });
 
     // The log is the only place TeX explains itself, so a failure carries it
     // rather than reporting a bare kind.
@@ -512,5 +523,34 @@ describe("a document with tables", () => {
     const main = (await sourcesFromDocument(tableMerged)).get(MAIN_FILE) ?? "";
 
     expect(main).not.toContain("%% TODO: the source document contains");
+  });
+});
+
+/** A 1×1 PNG, which is the smallest thing an engine will accept as a picture. */
+const PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+describe.skipIf(!dockerUp)("a document with a picture", () => {
+  const IMAGE: Paragraph["runs"][number] = {
+    kind: "image",
+    image: { part: "word/media/image1.png", widthMm: 20, heightMm: 20 },
+  };
+
+  const assets = new Map([
+    ["media/image1.png", new Uint8Array(Buffer.from(PIXEL_PNG, "base64"))],
+  ]);
+
+  it("compiles with the picture beside it", COMPILE_TIMEOUT, async () => {
+    const sources = generateSources({
+      profile: PROFILE,
+      blocks: paragraphBlocks([{ style: {}, runs: [IMAGE] }]),
+      assets,
+    });
+
+    const result = await compile(sources, MAIN_FILE, { assets });
+
+    expect(result.kind === "rejected" ? result.log : result.kind).toBe(
+      "compiled",
+    );
   });
 });

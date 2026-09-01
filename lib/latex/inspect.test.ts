@@ -23,14 +23,23 @@ describe.skipIf(!enabled)("inspect", () => {
     { timeout: 300_000 },
     async () => {
       const archive = await openDocx(await readFixture(FIXTURE));
-      const sources = generateSources(await extractDocument(archive));
+      const extracted = await extractDocument(archive);
+      const sources = generateSources(extracted);
 
       await mkdir(OUT, { recursive: true });
       for (const [name, content] of sources) {
         await writeFile(new URL(name, OUT), content, "utf8");
       }
+      for (const [name, bytes] of extracted.assets) {
+        await mkdir(new URL(`${name.replace(/[^/]*$/, "")}`, OUT), {
+          recursive: true,
+        });
+        await writeFile(new URL(name, OUT), bytes);
+      }
 
-      const result = await compile(sources, MAIN_FILE);
+      const result = await compile(sources, MAIN_FILE, {
+        assets: extracted.assets,
+      });
       if (result.kind === "compiled") {
         await writeFile(new URL("main.pdf", OUT), result.pdf);
       }

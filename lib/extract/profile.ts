@@ -1,10 +1,20 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
-import { extractBlocks, type Block } from "./body";
-import { DOCUMENT_RELATIONSHIPS, parseRelationships } from "./media";
+import { extractBlocks, imagePartsOf, type Block } from "./body";
+import {
+  assetPathFor,
+  DOCUMENT_RELATIONSHIPS,
+  parseRelationships,
+  readImages,
+  type Assets,
+} from "./media";
 import { parseNumbering } from "./numbering";
 import { extractPage } from "./page";
-import { collectDegradations, type ConversionReport } from "./report";
+import {
+  collectDegradations,
+  type ConversionReport,
+  type Degradations,
+} from "./report";
 import { extractTheme } from "./theme";
 import {
   findHeadingStyles,
@@ -29,6 +39,8 @@ export interface ExtractedDocument {
   readonly profile: StyleProfile;
   readonly blocks: readonly Block[];
   readonly report: ConversionReport;
+  /** The bytes of every picture the blocks include, by their source path. */
+  readonly assets: Assets;
 }
 
 /**
@@ -64,6 +76,8 @@ export async function extractDocument(
     ),
   });
 
+  const assets = await readCarriedImages(archive, blocks, degradations);
+
   return {
     profile: {
       page: extractPage(documentXml),
@@ -76,9 +90,39 @@ export async function extractDocument(
       features: detectFeatures(archive, documentXml),
     },
     blocks,
-    // Read after the walk: the collector is filled by it.
+    assets,
+    // Read after the walk, and after the media: both fill the collector.
     report: degradations.report(),
   };
+}
+
+/**
+ * The pictures the walk kept, with the ones the package does not actually hold
+ * reported instead.
+ *
+ * A relationship can name a part that is not in the archive — Word writes one
+ * for a linked picture whose file lives on the author's disk. Emitting an
+ * `\includegraphics` for it would stop the compile on the reader's machine,
+ * which is a worse answer than saying the picture is missing.
+ */
+async function readCarriedImages(
+  archive: DocxArchive,
+  blocks: readonly Block[],
+  degradations: Degradations,
+): Promise<Assets> {
+  const parts = imagePartsOf(blocks);
+  const assets = await readImages(archive, parts);
+
+  for (const part of parts) {
+    if (!assets.has(assetPathFor(part))) {
+      degradations.note(
+        "unresolved-image",
+        `The document places a picture from ${part}, which the package does not contain. It is left out rather than written as a file the compile would stop on.`,
+      );
+    }
+  }
+
+  return assets;
 }
 
 /**

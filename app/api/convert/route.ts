@@ -27,6 +27,12 @@ export interface ConvertSuccess {
    */
   readonly sources: Readonly<Record<string, string>>;
   /**
+   * The pictures the sources refer to, base64 encoded because JSON carries no
+   * bytes. The browser never decodes them: it holds them until it asks for a
+   * preview or a download, and the server that wrote them reads them back.
+   */
+  readonly assets: Readonly<Record<string, string>>;
+  /**
    * Paragraph count per style id. A style declared in styles.xml is not
    * necessarily applied to anything, and reporting the declaration alone would
    * claim a structure the document does not have.
@@ -74,7 +80,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const archive = await openDocx(new Uint8Array(await file.arrayBuffer()));
-    const { profile, blocks, report } = await extractDocument(archive);
+    const { profile, blocks, report, assets } = await extractDocument(archive);
 
     return Response.json({
       ok: true,
@@ -83,7 +89,13 @@ export async function POST(request: Request): Promise<Response> {
       entries: archive.entries,
       profile,
       sources: Object.fromEntries(
-        generateSources({ profile, blocks, options, report }),
+        generateSources({ profile, blocks, options, report, assets }),
+      ),
+      assets: Object.fromEntries(
+        [...assets].map(([path, bytes]) => [
+          path,
+          Buffer.from(bytes).toString("base64"),
+        ]),
       ),
       styleUsage: Object.fromEntries(countStyleUsage(paragraphsOf(blocks))),
       report,

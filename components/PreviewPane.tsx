@@ -17,10 +17,12 @@ type Sources = Readonly<Record<string, string>>;
 
 interface PreviewPaneProps {
   readonly sources: Sources;
+  /** Sent with every compile: the engine resolves \includegraphics against them. */
+  readonly assets: Sources;
   readonly options: GenerationOptions;
 }
 
-export function PreviewPane({ sources, options }: PreviewPaneProps) {
+export function PreviewPane({ sources, assets, options }: PreviewPaneProps) {
   const [state, setState] = useState<PreviewState>({ status: "compiling" });
   // What the visible preview was built from. Comparing it to the current
   // sources is what "stale" means, so it is derived rather than tracked
@@ -55,7 +57,7 @@ export function PreviewPane({ sources, options }: PreviewPaneProps) {
         const snapshot = latest.current;
 
         setState({ status: "compiling" });
-        const next = await requestPreview(snapshot, options);
+        const next = await requestPreview(snapshot, assets, options);
 
         if (!alive.current) {
           revoke(next);
@@ -67,7 +69,7 @@ export function PreviewPane({ sources, options }: PreviewPaneProps) {
     } finally {
       busy.current = false;
     }
-  }, [options]);
+  }, [assets, options]);
 
   useEffect(() => {
     latest.current = sources;
@@ -198,6 +200,7 @@ function Body({
 
 async function requestPreview(
   sources: Sources,
+  assets: Sources,
   options: GenerationOptions,
 ): Promise<PreviewState> {
   let response: Response;
@@ -205,7 +208,7 @@ async function requestPreview(
     response = await fetch("/api/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sources, options }),
+      body: JSON.stringify({ sources, assets, options }),
     });
   } catch {
     return {

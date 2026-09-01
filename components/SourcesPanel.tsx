@@ -6,6 +6,8 @@ import { LatexEditor } from "./LatexEditor";
 interface SourcesPanelProps {
   readonly filename: string;
   readonly sources: Readonly<Record<string, string>>;
+  /** Base64 pictures, forwarded untouched: the panel edits text, not media. */
+  readonly assets: Readonly<Record<string, string>>;
   readonly onEdit: (path: string, content: string) => void;
   readonly onRevert: () => void;
   readonly edited: boolean;
@@ -16,6 +18,7 @@ type DownloadState = "idle" | "packaging" | "failed";
 export function SourcesPanel({
   filename,
   sources,
+  assets,
   onEdit,
   onRevert,
   edited,
@@ -30,7 +33,7 @@ export function SourcesPanel({
       const response = await fetch("/api/bundle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename, sources }),
+        body: JSON.stringify({ filename, sources, assets }),
       });
       if (!response.ok) {
         setState("failed");
@@ -41,7 +44,7 @@ export function SourcesPanel({
     } catch {
       setState("failed");
     }
-  }, [filename, sources]);
+  }, [filename, sources, assets]);
 
   const edit = useCallback(
     (content: string) => onEdit(active, content),
