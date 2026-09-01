@@ -425,10 +425,30 @@ function render(paragraph: Paragraph, context: Context): string {
   return `\\newpage\n${rendered}`;
 }
 
-function renderParagraph(paragraph: Paragraph, context: Context): string {
-  const role = paragraph.styleId
+/**
+ * What the paragraph is, by what the document says first and by how it reads
+ * second.
+ *
+ * A declared style wins: a document that names its headings has already
+ * answered the question, and a reading that disagreed with it would be this
+ * build overruling the author. The inference only fills the silence, and only
+ * at the top level, which is the one depth it can justify — the extraction
+ * read a paragraph that stands out from the body, not one that stands out
+ * from another heading.
+ */
+function roleOf(paragraph: Paragraph, context: Context): Role | undefined {
+  const declared = paragraph.styleId
     ? context.roles.get(paragraph.styleId)
     : undefined;
+
+  if (declared) {
+    return declared;
+  }
+  return paragraph.inferredHeading ? { kind: "heading", level: 1 } : undefined;
+}
+
+function renderParagraph(paragraph: Paragraph, context: Context): string {
+  const role = roleOf(paragraph, context);
   const body = bodyOf(paragraph, context);
 
   // An empty heading would produce a bare rule with nothing under it; an empty

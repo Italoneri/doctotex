@@ -1,6 +1,7 @@
 import { readTextPart, type DocxArchive } from "@/lib/docx/archive";
 import { DocxFormatError } from "@/lib/docx/archive";
 import { extractBlocks, imagePartsOf, type Block } from "./body";
+import { inferHeadings } from "./headings";
 import {
   assetPathFor,
   DOCUMENT_RELATIONSHIPS,
@@ -65,7 +66,7 @@ export async function extractDocument(
     degradations,
   );
 
-  const blocks = extractBlocks(documentXml, {
+  const walked = extractBlocks(documentXml, {
     sheet,
     numbering,
     degradations,
@@ -76,16 +77,32 @@ export async function extractDocument(
     ),
   });
 
+  // Body text is the Normal style resolved against docDefaults, which is what
+  // an unstyled paragraph actually renders as. Read before the headings are
+  // inferred: what makes a paragraph stand out is what the body does not do.
+  const defaults = resolveStyle(sheet, normalStyleId(sheet));
+  const headings = findHeadingStyles(sheet);
+  const title = findTitleStyle(sheet);
+
+  const blocks = inferHeadings(
+    walked,
+    defaults,
+    new Set(
+      [...headings.map((heading) => heading.styleId), title?.styleId].filter(
+        (styleId): styleId is string => styleId !== undefined,
+      ),
+    ),
+    degradations,
+  );
+
   const assets = await readCarriedImages(archive, blocks, degradations);
 
   return {
     profile: {
       page: extractPage(documentXml),
-      // Body text is the Normal style resolved against docDefaults, which is
-      // what an unstyled paragraph actually renders as.
-      defaults: resolveStyle(sheet, normalStyleId(sheet)),
-      headings: findHeadingStyles(sheet),
-      title: findTitleStyle(sheet),
+      defaults,
+      headings,
+      title,
       theme,
       features: detectFeatures(archive, documentXml),
     },

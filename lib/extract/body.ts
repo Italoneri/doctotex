@@ -71,6 +71,11 @@ export interface Paragraph {
   readonly runs: readonly Run[];
   /** Set where `w:numPr` puts the paragraph in a list, with its level resolved. */
   readonly list?: ListMarker;
+  /**
+   * Set where the paragraph reads as a section the document never declared.
+   * Not a style the document carries, which is why it is named as a reading.
+   */
+  readonly inferredHeading?: boolean;
 }
 
 /**
@@ -531,7 +536,7 @@ function mergeAdjacent(runs: readonly Run[]): readonly Run[] {
     if (
       previous?.kind === "text" &&
       run.kind === "text" &&
-      sameStyle(previous.style, run.style)
+      sameTextStyle(previous.style, run.style)
     ) {
       merged[merged.length - 1] = {
         ...previous,
@@ -550,7 +555,7 @@ function mergeAdjacent(runs: readonly Run[]): readonly Run[] {
  * `undefined` are the same thing, which is why undefined entries are dropped
  * before the counts are compared.
  */
-function sameStyle(left: TextStyle, right: TextStyle): boolean {
+export function sameTextStyle(left: TextStyle, right: TextStyle): boolean {
   const declared = (style: TextStyle) =>
     Object.entries(style).filter(([, value]) => value !== undefined);
 

@@ -86,6 +86,7 @@ export interface ClassInput {
  */
 interface Needs {
   readonly pictures: boolean;
+  readonly inferredHeadings: boolean;
   readonly strikeOrUnderline: boolean;
   readonly justifiedParagraphs: boolean;
   readonly shapedParagraphs: boolean;
@@ -102,6 +103,7 @@ function needsOf(
   const paragraphs = paragraphsOf(blocks);
 
   return {
+    inferredHeadings: paragraphs.some((p) => p.inferredHeading),
     // What the document places, narrowed to what actually travels with it: a
     // picture the package did not hold is not a reason to load graphicx.
     pictures: paragraphs.some((paragraph) =>
@@ -191,7 +193,13 @@ export function preambleLines(input: ClassInput): readonly string[] {
     ...spacing(profile, bodySizePt, needs),
     ...prefixed(paragraphEnvironment(needs)),
     "",
-    ...headings(profile, bodySizePt, bodyFamily, input.usage ?? new Map()),
+    ...headings(
+      profile,
+      bodySizePt,
+      bodyFamily,
+      input.usage ?? new Map(),
+      needs,
+    ),
     "",
     ...titleCommand(profile.title, bodySizePt, bodyFamily),
     "",
@@ -558,6 +566,7 @@ function headings(
   bodySizePt: number,
   bodyFamily: LatexFamily,
   usage: StyleUsage,
+  needs: Needs,
 ): readonly string[] {
   const lines = [
     "%% Heading styles, one per outline level the document declares.",
@@ -566,16 +575,26 @@ function headings(
 
   if (profile.headings.length === 0) {
     lines.push("%% The document declares no heading styles.");
-    return lines;
   }
 
   const used = profile.headings.filter((h) => (usage.get(h.styleId) ?? 0) > 0);
-  if (used.length === 0) {
+  if (profile.headings.length > 0 && used.length === 0) {
     lines.push(
       "%% None of these styles is applied to any paragraph in the document:",
-      "%% every heading in it is a normal paragraph formatted by hand. The",
-      "%% definitions are kept so the structure can be applied by hand here.",
+      "%% every heading in it is a normal paragraph formatted by hand.",
     );
+  }
+
+  // A section the extraction read rather than the document declared still has
+  // to be formatted. Where the document declares no level-1 style there is
+  // nothing to borrow, and article's own \section — large, bold, ranged left —
+  // looks nothing like the centred line the reading was based on.
+  if (needs.inferredHeadings && !profile.headings.some((h) => h.level === 1)) {
+    lines.push("", ...inferredSectionFormat(bodySizePt));
+  }
+
+  if (profile.headings.length === 0) {
+    return lines;
   }
 
   for (const heading of profile.headings) {
@@ -600,6 +619,23 @@ function headings(
   }
 
   return lines;
+}
+
+/**
+ * How the paragraphs that were read as sections already looked: centred, in
+ * the body's own size and weight. Reproducing that keeps the promotion a
+ * change of structure rather than a change of appearance.
+ */
+function inferredSectionFormat(bodySizePt: number): readonly string[] {
+  return [
+    "%% Sections the conversion read from the text's own shape rather than",
+    "%% from a style, formatted as those paragraphs already were.",
+    "\\titleformat{\\section}",
+    `  {\\normalfont${fontSize(bodySizePt)}\\centering}`,
+    "  {}{0pt}",
+    "  {}",
+    "\\titlespacing*{\\section}{0pt}{0pt}{0pt}",
+  ];
 }
 
 function formatHeading(
