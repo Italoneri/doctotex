@@ -7,6 +7,7 @@ import {
   toXmlNode,
   type SequenceNode,
 } from "@/lib/docx/sequence";
+import { readEquation } from "./equations";
 import { readDrawing, type ImageRef, type Relationships } from "./media";
 import { resolveMarker, type ListMarker, type Numbering } from "./numbering";
 import type { Degradations } from "./report";
@@ -61,7 +62,28 @@ export interface ImageRun {
   readonly image: ImageRef;
 }
 
-export type Run = TextRun | ImageRun;
+/** Mathematics, already spelled as LaTeX by the reader that recognised it. */
+export interface EquationRun {
+  readonly kind: "equation";
+  readonly latex: string;
+}
+
+/**
+ * Something the document placed here that could not be carried, kept in place.
+ *
+ * Dropping it silently is what leaves a bare "(1)" on a line of its own, which
+ * reads as a numbering fault rather than as the equation it used to number.
+ * Where it sat is half of what the reader needs; the other half is why.
+ */
+export interface LostContentRun {
+  readonly kind: "lost";
+  /** What stood here, as a noun phrase: "an equation", "an embedded object". */
+  readonly what: string;
+  /** Why it could not be carried, as the note in its place will say it. */
+  readonly because: string;
+}
+
+export type Run = TextRun | ImageRun | EquationRun | LostContentRun;
 
 export interface Paragraph {
   /** Localised, e.g. `Titre1`. Kept so the sectioning role can be recovered. */
@@ -423,6 +445,14 @@ function collectRuns(
       case "w:r":
         runs.push(...readRun(node, paragraph, context));
         break;
+      // Word's own equations sit beside the runs rather than inside one, and
+      // `m:oMathPara` is the display wrapper around one or more of them.
+      case "m:oMath":
+        runs.push(readMath(node, context));
+        break;
+      case "m:oMathPara":
+        runs.push(...collectRuns(node.children, paragraph, context));
+        break;
       case "w:hyperlink":
       case "w:smartTag":
       case "w:ins":
@@ -471,19 +501,81 @@ function readRun(
   };
 
   for (const child of node.children) {
-    if (child.name !== "w:drawing") {
-      text += readRunContent(child);
+    if (child.name === "w:drawing") {
+      const image = readDrawing(child, relationships, degradations);
+      if (image) {
+        flush();
+        runs.push({ kind: "image", image });
+      }
       continue;
     }
-    const image = readDrawing(child, relationships, degradations);
-    if (image) {
+    if (child.name === "w:object") {
       flush();
-      runs.push({ kind: "image", image });
+      runs.push(readObject(child, degradations));
+      continue;
     }
+    text += readRunContent(child);
   }
 
   flush();
   return runs;
+}
+
+/**
+ * One `m:oMath` as a run, read or refused.
+ *
+ * Refusing is a degradation and is reported as one. Half an equation would not
+ * be: the reader has no way to see that a limit went missing, and would carry
+ * the wrong mathematics forward believing the document said it.
+ */
+function readMath(node: SequenceNode, context: BodyContext): Run {
+  const reading = readEquation(node);
+
+  if (reading.kind === "read") {
+    return { kind: "equation", latex: reading.latex };
+  }
+  return lost("an equation", reading.because, context.degradations);
+}
+
+/**
+ * An embedded OLE object, which is another program's document sitting inside
+ * this one — a spreadsheet, a chart, or an Equation 3.0 formula from the editor
+ * Word shipped before OMML.
+ *
+ * None of them can be carried: the part is that program's binary format, and
+ * all Word keeps beside it is a picture. Which program it was decides what the
+ * note calls it, because "an equation is missing" and "an embedded object is
+ * missing" send the reader to different places.
+ */
+function readObject(
+  node: SequenceNode,
+  degradations: Degradations,
+): LostContentRun {
+  const progId = attributeOf(findChild(node, "o:OLEObject"), "ProgID") ?? "";
+
+  return progId.startsWith("Equation.")
+    ? lost(
+        "an equation",
+        "it is an embedded Equation 3.0 object, which stores no mathematics — only a picture of it",
+        degradations,
+      )
+    : lost(
+        "an embedded object",
+        `it is ${progId === "" ? "another program's document" : `a ${progId} object`}, which this build cannot read`,
+        degradations,
+      );
+}
+
+function lost(
+  what: string,
+  because: string,
+  degradations: Degradations,
+): LostContentRun {
+  degradations.note(
+    "unreadable-equation",
+    `${what[0]?.toUpperCase()}${what.slice(1)} is left out because ${because}. Its place is marked in the generated source.`,
+  );
+  return { kind: "lost", what, because };
 }
 
 /** The property readers work on the unordered view; this is the crossing. */

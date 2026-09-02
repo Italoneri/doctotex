@@ -603,3 +603,41 @@ describe("sources that ask for a picture that did not arrive", () => {
     );
   });
 });
+
+describe.skipIf(!dockerUp)("a document with mathematics", () => {
+  it("compiles what the equation reader emits", COMPILE_TIMEOUT, async () => {
+    // One of each construct the reader covers, so TeX is what decides whether
+    // the LaTeX it writes is real LaTeX.
+    const equations = [
+      "\frac{a}{b}",
+      "{x}^{2}",
+      "{a}_{i}",
+      "{x}_{i}^{2}",
+      "\sqrt{2}",
+      "\sqrt[3]{8}",
+      "\left(x+1\right)",
+      "\left[x\right]",
+      "\sum_{i=1}^{n}{i}",
+      "\int{x}",
+      "\pi r^{2}",
+      "a \leq b",
+      "\Omega \times \infty",
+    ];
+
+    const sources = generateSources({
+      profile: PROFILE,
+      blocks: paragraphBlocks(
+        equations.map((latex) => ({
+          style: {},
+          runs: [{ kind: "equation" as const, latex }],
+        })),
+      ),
+    });
+
+    const result = await compile(sources, MAIN_FILE);
+
+    expect(result.kind === "rejected" ? result.log : result.kind).toBe(
+      "compiled",
+    );
+  });
+});

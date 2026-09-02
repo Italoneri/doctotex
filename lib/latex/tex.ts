@@ -1,6 +1,7 @@
 import {
   COLUMN_BREAK,
   PAGE_BREAK,
+  paragraphsOf,
   type Block,
   type Paragraph,
   type Run,
@@ -68,6 +69,7 @@ export function generateDocument(input: DocumentInput): string {
         input.profile,
         input.report ?? EMPTY_REPORT,
         context.assets,
+        input.blocks,
       ),
     ),
     "",
@@ -94,13 +96,15 @@ function conversionNotes(
   profile: StyleProfile,
   report: ConversionReport,
   assets: Assets,
+  blocks: readonly Block[],
 ): readonly string[] {
-  return [...missingFeatures(profile, assets), ...degraded(report)];
+  return [...missingFeatures(profile, assets, blocks), ...degraded(report)];
 }
 
 function missingFeatures(
   profile: StyleProfile,
   assets: Assets,
+  blocks: readonly Block[],
 ): readonly string[] {
   const missing = [
     // Only where none came across. A document some of whose pictures travelled
@@ -108,8 +112,10 @@ function missingFeatures(
     // did not — saying "contains images" over a page that shows them reads as
     // though the conversion had done nothing.
     profile.features.images && assets.size === 0 && "images",
-    profile.features.ommlEquations && "equations",
-    profile.features.oleObjects && "embedded objects",
+    profile.features.ommlEquations && !hasEquation(blocks) && "equations",
+    // Embedded objects are not listed here. Each one is marked where it stood,
+    // with what it was and why it could not come across — which is more than
+    // this note can say, and says it where the reader is looking.
   ].filter((entry): entry is string => typeof entry === "string");
 
   if (missing.length === 0) {
@@ -122,6 +128,13 @@ function missingFeatures(
     "%% the document's paragraphs alone. Nothing here silently stands in for",
     "%% them — they are absent.",
   ];
+}
+
+/** Whether any equation came across, which decides what the note may claim. */
+function hasEquation(blocks: readonly Block[]): boolean {
+  return paragraphsOf(blocks).some((paragraph) =>
+    paragraph.runs.some((run) => run.kind === "equation"),
+  );
 }
 
 function degraded(report: ConversionReport): readonly string[] {
@@ -538,12 +551,39 @@ function renderRuns(
   surface: Surface,
 ): string {
   return runs
-    .map((run) =>
-      run.kind === "text"
-        ? renderRun(run, baseline, surface)
-        : renderImage(run.image, context),
-    )
+    .map((run) => {
+      switch (run.kind) {
+        case "text":
+          return renderRun(run, baseline, surface);
+        case "image":
+          return renderImage(run.image, context);
+        case "equation":
+          return `$${run.latex}$`;
+        case "lost":
+          return lostContentNote(run.what, run.because, surface);
+      }
+    })
     .join("");
+}
+
+/**
+ * What stands where something could not be carried.
+ *
+ * A comment rather than a placeholder anyone might mistake for content, and it
+ * carries the reason: someone opening the `.tex` to type the equation back in
+ * needs to know it was not simply forgotten. In a cell a `%` would run to the
+ * end of the line and swallow the `&` that ends the column, so nothing is
+ * written there and the report is what says it — the same rule the page and
+ * column breaks already follow.
+ */
+function lostContentNote(
+  what: string,
+  because: string,
+  surface: Surface,
+): string {
+  return surface === "cell"
+    ? ""
+    : `\n%% TODO: ${what} stood here. It is left out because ${because}.\n`;
 }
 
 /**
