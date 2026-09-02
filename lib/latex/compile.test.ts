@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { listsNested, tableMerged } from "@/fixtures/documents";
 import { hasFixture, readFixture } from "@/fixtures/fixture";
 import { openDocx } from "@/lib/docx/archive";
+import { parseSequence } from "@/lib/docx/sequence";
 import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
+import { readEquation } from "@/lib/extract/equations";
 import { extractDocument } from "@/lib/extract/profile";
 import type { StyleProfile, TextStyle } from "@/lib/extract/types";
 import { BIB_FILE } from "./bib";
@@ -605,33 +607,66 @@ describe("sources that ask for a picture that did not arrive", () => {
 });
 
 describe.skipIf(!dockerUp)("a document with mathematics", () => {
-  it("compiles what the equation reader emits", COMPILE_TIMEOUT, async () => {
-    // One of each construct the reader covers, so TeX is what decides whether
-    // the LaTeX it writes is real LaTeX.
-    const equations = [
-      "\frac{a}{b}",
-      "{x}^{2}",
-      "{a}_{i}",
-      "{x}_{i}^{2}",
-      "\sqrt{2}",
-      "\sqrt[3]{8}",
-      "\left(x+1\right)",
-      "\left[x\right]",
-      "\sum_{i=1}^{n}{i}",
-      "\int{x}",
-      "\pi r^{2}",
-      "a \leq b",
-      "\Omega \times \infty",
-    ];
+  const MATH_NAMESPACE =
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
 
+  function mathRun(text: string): string {
+    return `<m:r><m:t>${text}</m:t></m:r>`;
+  }
+
+  /** One `m:oMath` per construct the reader covers, as Word would write it. */
+  const OMML: readonly string[] = [
+    mathRun("x + 1 = 2"),
+    `<m:f><m:num>${mathRun("a")}</m:num><m:den>${mathRun("b")}</m:den></m:f>`,
+    `<m:sSup><m:e>${mathRun("x")}</m:e><m:sup>${mathRun("2")}</m:sup></m:sSup>`,
+    `<m:sSub><m:e>${mathRun("a")}</m:e><m:sub>${mathRun("i")}</m:sub></m:sSub>`,
+    `<m:sSubSup><m:e>${mathRun("x")}</m:e><m:sub>${mathRun("i")}</m:sub>` +
+      `<m:sup>${mathRun("2")}</m:sup></m:sSubSup>`,
+    `<m:rad><m:deg/><m:e>${mathRun("2")}</m:e></m:rad>`,
+    `<m:rad><m:deg>${mathRun("3")}</m:deg><m:e>${mathRun("8")}</m:e></m:rad>`,
+    `<m:d><m:e>${mathRun("x+1")}</m:e></m:d>`,
+    `<m:d><m:dPr><m:begChr m:val="["/><m:endChr m:val="]"/></m:dPr>` +
+      `<m:e>${mathRun("x")}</m:e></m:d>`,
+    `<m:nary><m:naryPr><m:chr m:val="∑"/></m:naryPr><m:sub>${mathRun("i=1")}</m:sub>` +
+      `<m:sup>${mathRun("n")}</m:sup><m:e>${mathRun("i")}</m:e></m:nary>`,
+    `<m:nary><m:naryPr><m:chr m:val="∫"/></m:naryPr><m:e>${mathRun("x")}</m:e></m:nary>`,
+    mathRun("πr"),
+    mathRun("a ≤ b"),
+    mathRun("Ω × ∞"),
+  ];
+
+  /**
+   * Read by the reader rather than written by hand.
+   *
+   * Hand-written LaTeX here would be a second copy of what `equations.ts`
+   * emits, free to drift from it and to be wrong in ways that say nothing
+   * about the code. Driving the real reader means TeX is judging the actual
+   * output, which is the only thing this test is for.
+   */
+  function equationRuns(): readonly Paragraph[] {
+    return OMML.map((inner) => {
+      const node = parseSequence(
+        `<m:oMath ${MATH_NAMESPACE}>${inner}</m:oMath>`,
+      )[0];
+      if (!node) {
+        throw new Error(`the fixture does not parse: ${inner}`);
+      }
+
+      const reading = readEquation(node);
+      if (reading.kind !== "read") {
+        throw new Error(`the reader refused its own fixture: ${inner}`);
+      }
+      return {
+        style: {},
+        runs: [{ kind: "equation" as const, latex: reading.latex }],
+      };
+    });
+  }
+
+  it("compiles what the equation reader emits", COMPILE_TIMEOUT, async () => {
     const sources = generateSources({
       profile: PROFILE,
-      blocks: paragraphBlocks(
-        equations.map((latex) => ({
-          style: {},
-          runs: [{ kind: "equation" as const, latex }],
-        })),
-      ),
+      blocks: paragraphBlocks(equationRuns()),
     });
 
     const result = await compile(sources, MAIN_FILE);
