@@ -371,3 +371,39 @@ describe("pictures", () => {
     expect(generate()).not.toContain("graphicx");
   });
 });
+
+describe("equations", () => {
+  it("loads amsmath where an equation came across", () => {
+    const cls = generate(
+      {},
+      {
+        blocks: paragraphBlocks([
+          { style: {}, runs: [{ kind: "equation", latex: "x=1" }] },
+        ]),
+      },
+    );
+
+    expect(cls).toContain("\RequirePackage{amsmath}");
+  });
+
+  // An equation that could not be read leaves no mathematics to set.
+  it("leaves amsmath out where every equation was refused", () => {
+    const cls = generate(
+      {},
+      {
+        blocks: paragraphBlocks([
+          {
+            style: {},
+            runs: [{ kind: "lost", what: "an equation", because: "reasons" }],
+          },
+        ]),
+      },
+    );
+
+    expect(cls).not.toContain("amsmath");
+  });
+
+  it("leaves amsmath out of a document with no mathematics at all", () => {
+    expect(generate()).not.toContain("amsmath");
+  });
+});

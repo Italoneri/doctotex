@@ -13,7 +13,8 @@ export type DegradationCode =
   | "table-borders"
   | "unresolved-image"
   | "unsupported-image-format"
-  | "inferred-heading";
+  | "inferred-heading"
+  | "unreadable-equation";
 
 export interface Degradation {
   readonly code: DegradationCode;

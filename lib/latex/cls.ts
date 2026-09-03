@@ -86,6 +86,7 @@ export interface ClassInput {
  */
 interface Needs {
   readonly pictures: boolean;
+  readonly equations: boolean;
   readonly inferredHeadings: boolean;
   readonly strikeOrUnderline: boolean;
   readonly justifiedParagraphs: boolean;
@@ -103,6 +104,9 @@ function needsOf(
   const paragraphs = paragraphsOf(blocks);
 
   return {
+    equations: paragraphs.some((paragraph) =>
+      paragraph.runs.some((run) => run.kind === "equation"),
+    ),
     inferredHeadings: paragraphs.some((p) => p.inferredHeading),
     // What the document places, narrowed to what actually travels with it: a
     // picture the package did not hold is not a reason to load graphicx.
@@ -185,6 +189,7 @@ export function preambleLines(input: ClassInput): readonly string[] {
     ...fontSetup(profile, paragraphs, bodySizePt, options.engine),
     ...prefixed(inlineDecorations(needs)),
     ...prefixed(pictures(needs)),
+    ...prefixed(mathematics(needs)),
     ...prefixed(needs.lists ? listPreamble() : []),
     ...prefixed(tablePreamble(needs.tables)),
     "",
@@ -214,6 +219,20 @@ export function preambleLines(input: ClassInput): readonly string[] {
  * and a class-wide default would be a number no picture in the document asked
  * for.
  */
+/**
+ * `amsmath` for the mathematics read out of the document.
+ *
+ * LaTeX sets simple formulas without it, but `\frac` inside a limit and the
+ * spacing around a big operator are where plain TeX and what Word drew stop
+ * agreeing, and every equation this build reads can contain both.
+ */
+function mathematics(needs: Needs): readonly string[] {
+  if (!needs.equations) {
+    return [];
+  }
+  return ["%% The document contains equations.", "\\RequirePackage{amsmath}"];
+}
+
 function pictures(needs: Needs): readonly string[] {
   if (!needs.pictures) {
     return [];

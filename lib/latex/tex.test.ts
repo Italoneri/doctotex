@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { paragraphBlocks, type Paragraph } from "@/lib/extract/body";
+import { DEFAULT_CELL_MARGINS } from "@/lib/extract/table";
 import type { Assets } from "@/lib/extract/media";
 import type { StyleProfile, TextStyle } from "@/lib/extract/types";
 import { DEFAULT_OPTIONS, type GenerationOptions } from "./options";
@@ -587,5 +588,143 @@ describe("sections the document does not declare", () => {
 
     expect(tex).toContain("\\subsubsection*{METHOD}");
     expect(tex).not.toContain("\\section*{METHOD}");
+  });
+});
+
+describe("equations", () => {
+  it("writes a read equation as inline mathematics", () => {
+    const tex = render([
+      {
+        style: {},
+        runs: [{ kind: "equation", latex: "\frac{a}{b}" }],
+      },
+    ]);
+
+    expect(tex).toContain("$\frac{a}{b}$");
+  });
+
+  it("keeps an equation in its place among the words", () => {
+    const tex = render([
+      {
+        style: {},
+        runs: [
+          run("where "),
+          { kind: "equation", latex: "x=1" },
+          run(" holds"),
+        ],
+      },
+    ]);
+
+    expect(tex).toContain("where $x=1$ holds");
+  });
+
+  // A bare "(1)" left where an equation was reads as a numbering fault.
+  it("marks the place of what it could not carry, with the reason", () => {
+    const tex = render([
+      {
+        style: {},
+        runs: [
+          { kind: "lost", what: "an equation", because: "it is an OLE object" },
+        ],
+      },
+    ]);
+
+    expect(tex).toContain(
+      "%% TODO: an equation stood here. It is left out because it is an OLE object.",
+    );
+  });
+
+  it("names an embedded object as one rather than as an equation", () => {
+    const tex = render([
+      {
+        style: {},
+        runs: [
+          {
+            kind: "lost",
+            what: "an embedded object",
+            because:
+              "it is a Excel.Sheet.12 object, which this build cannot read",
+          },
+        ],
+      },
+    ]);
+
+    expect(tex).toContain("%% TODO: an embedded object stood here.");
+  });
+
+  // A `%` inside a cell runs to the end of the line and swallows the `&`.
+  it("writes no comment inside a table cell", () => {
+    const tex = generateDocument({
+      profile: PROFILE,
+      blocks: [
+        {
+          kind: "table",
+          table: {
+            columns: [{ kind: "auto" }],
+            rows: [
+              {
+                repeatsAsHeader: false,
+                cells: [
+                  {
+                    columnSpan: 1,
+                    rowSpan: 1,
+                    verticalMerge: "none",
+                    verticalAlign: "top",
+                    borders: {},
+                    blocks: paragraphBlocks([
+                      {
+                        style: {},
+                        runs: [
+                          {
+                            kind: "lost",
+                            what: "an equation",
+                            because: "it is an OLE object",
+                          },
+                        ],
+                      },
+                    ]),
+                  },
+                ],
+              },
+            ],
+            borders: {},
+            cellMargins: DEFAULT_CELL_MARGINS,
+          },
+        },
+      ],
+    });
+
+    expect(tex).not.toContain("TODO: an equation stood here");
+  });
+
+  it("stops claiming equations are absent once one is read", () => {
+    const tex = generateDocument({
+      profile: {
+        ...PROFILE,
+        features: { ...PROFILE.features, ommlEquations: true },
+      },
+      blocks: paragraphBlocks([
+        { style: {}, runs: [{ kind: "equation", latex: "x=1" }] },
+      ]),
+    });
+
+    expect(tex).not.toContain("the source document contains equations");
+  });
+
+  it("still says so when every equation was refused", () => {
+    const tex = generateDocument({
+      profile: {
+        ...PROFILE,
+        features: { ...PROFILE.features, ommlEquations: true },
+      },
+      blocks: paragraphBlocks([
+        {
+          style: {},
+          runs: [{ kind: "lost", what: "an equation", because: "reasons" }],
+        },
+      ]),
+    });
+
+    expect(tex).toContain("the source document contains equations");
   });
 });

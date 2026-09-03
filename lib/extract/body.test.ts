@@ -741,3 +741,82 @@ describe("pictures", () => {
     ]);
   });
 });
+
+describe("equations", () => {
+  const MATH_NS =
+    'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
+
+  function readWithMath(xml: string, degradations = collectDegradations()) {
+    return paragraphsOf(
+      extractBlocks(
+        documentXml(xml),
+        context(EMPTY_SHEET, new Map(), degradations, new Map()),
+      ),
+    );
+  }
+
+  it("reads an equation that sits beside the runs, in its place", () => {
+    const xml = paragraph(
+      `<w:r><w:t>where </w:t></w:r>` +
+        `<m:oMath ${MATH_NS}><m:r><m:t>x=1</m:t></m:r></m:oMath>` +
+        `<w:r><w:t> holds</w:t></w:r>`,
+    );
+
+    expect(readWithMath(xml)[0]?.runs).toEqual([
+      { kind: "text", text: "where ", style: {} },
+      { kind: "equation", latex: "x=1" },
+      { kind: "text", text: " holds", style: {} },
+    ]);
+  });
+
+  // m:oMathPara is the display wrapper; what it holds is what gets read.
+  it("reaches the equations inside a display wrapper", () => {
+    const xml = paragraph(
+      `<m:oMathPara ${MATH_NS}><m:oMath><m:r><m:t>a+b</m:t></m:r></m:oMath></m:oMathPara>`,
+    );
+
+    expect(readWithMath(xml)[0]?.runs).toEqual([
+      { kind: "equation", latex: "a+b" },
+    ]);
+  });
+
+  it("keeps the place of an equation it cannot read, and says why", () => {
+    const degradations = collectDegradations();
+    const xml = paragraph(
+      `<m:oMath ${MATH_NS}><m:r><m:t>x ⨂ y</m:t></m:r></m:oMath>`,
+    );
+
+    const runs = readWithMath(xml, degradations)[0]?.runs ?? [];
+
+    expect(runs[0]?.kind).toBe("lost");
+    expect(degradations.report().degradations[0]?.code).toBe(
+      "unreadable-equation",
+    );
+  });
+
+  // Word stores an Equation 3.0 formula as another program's binary, with only
+  // a picture of it beside.
+  it("names an embedded Equation 3.0 object as the equation it was", () => {
+    const xml = paragraph(
+      `<w:r><w:object><o:OLEObject ProgID="Equation.3" r:id="rId9"/></w:object></w:r>`,
+    );
+
+    expect(readWithMath(xml)[0]?.runs[0]).toMatchObject({
+      kind: "lost",
+      what: "an equation",
+    });
+  });
+
+  // A spreadsheet is not an equation, and sending the reader looking for one
+  // wastes the trip.
+  it("names an object that is not an equation for what it is", () => {
+    const xml = paragraph(
+      `<w:r><w:object><o:OLEObject ProgID="Excel.Sheet.12" r:id="rId9"/></w:object></w:r>`,
+    );
+
+    expect(readWithMath(xml)[0]?.runs[0]).toMatchObject({
+      kind: "lost",
+      what: "an embedded object",
+    });
+  });
+});
